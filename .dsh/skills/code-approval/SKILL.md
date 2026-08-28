@@ -1,3 +1,8 @@
+---
+name: code-approval
+description: 代码改动需先向用户说明修改方案并经确认后才执行；禁止代提交 git commit，commit 信息需符合规范且全部中文
+---
+
 # Code Change Approval Rule
 
 ## 核心规则
