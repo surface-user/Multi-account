@@ -90,6 +90,27 @@ class AccountTile extends StatelessWidget {
                         color: scheme.onSurfaceVariant,
                       ),
                     ),
+                    if (account.school.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(Icons.school_outlined,
+                              size: 13, color: scheme.primary),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              account.school,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: scheme.primary,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 4),
                     Row(
                       children: [

@@ -213,6 +213,27 @@ class _CurrentAccountCard extends StatelessWidget {
                         ],
                       ),
                     ),
+                    if (account.school.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Icon(Icons.school_outlined,
+                              size: 14,
+                              color: scheme.onPrimary.withValues(alpha: 0.9)),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              account.school,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: scheme.onPrimary.withValues(alpha: 0.9),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),

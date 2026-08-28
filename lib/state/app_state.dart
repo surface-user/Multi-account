@@ -97,9 +97,10 @@ class AppState extends ChangeNotifier {
     }
     api.setCookie(cookie);
 
-    // 用 Cookie 拉一次用户信息：既能验证登录态有效，也能拿到真实姓名/uid。
+    // 用 Cookie 拉一次用户信息：既能验证登录态有效，也能拿到真实姓名/uid/学校。
     String nickname = username;
     String? uid;
+    String school = '';
     try {
       final user = await api.fetchUserInfo();
       if (user != null) {
@@ -109,6 +110,7 @@ class AppState extends ChangeNotifier {
         }
         uid = user['user_id']?.toString();
         api.setUid(uid);
+        school = user['school']?.toString() ?? '';
       }
     } catch (_) {
       // 拉取失败不阻断添加；仅用输入的 username 作为显示名。
@@ -120,6 +122,7 @@ class AppState extends ChangeNotifier {
       nickname: nickname,
       cookie: cookie,
       server: server,
+      school: school,
       lastLoginAt: DateTime.now(),
       createdAt: DateTime.now(),
     );
@@ -152,6 +155,7 @@ class AppState extends ChangeNotifier {
     final fallback = (username != null && username.isNotEmpty) ? username : '扫码用户';
     String nickname = fallback;
     String? userId;
+    String school = '';
     try {
       final profile = await api.fetchUserInfo();
       if (profile != null) {
@@ -160,6 +164,7 @@ class AppState extends ChangeNotifier {
           nickname = name;
         }
         userId = profile['user_id']?.toString();
+        school = profile['school']?.toString() ?? '';
       }
     } catch (_) {
       // 拉取失败不阻断；仅用登录输入作为显示名。
@@ -180,6 +185,7 @@ class AppState extends ChangeNotifier {
         cookie: cookie,
         server: server,
         isRegistered: isRegistered,
+        school: school,
         lastLoginAt: DateTime.now(),
       );
       await _cookieStore.save(target.id, cookie);
@@ -205,6 +211,7 @@ class AppState extends ChangeNotifier {
           cookie: cookie,
           server: server,
           isRegistered: isRegistered,
+          school: school,
           lastLoginAt: DateTime.now(),
           createdAt: DateTime.now(),
         );
@@ -220,6 +227,7 @@ class AppState extends ChangeNotifier {
         cookie: cookie,
         server: server,
         isRegistered: isRegistered,
+        school: school,
         lastLoginAt: DateTime.now(),
         createdAt: DateTime.now(),
       );

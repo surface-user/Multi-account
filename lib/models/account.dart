@@ -15,6 +15,7 @@ class Account {
     this.cookie,
     this.server = RainClassroomServerType.yuketang,
     this.isRegistered = true,
+    this.school = '',
     this.lastLoginAt,
     required this.createdAt,
   });
@@ -43,6 +44,9 @@ class Account {
   /// 是否已注册 / 绑定高校。false 表示登录成功但资料为空（未绑定高校，无法正常签到）。
   final bool isRegistered;
 
+  /// 高校名称（登录后从用户资料解析；未获取到则为空字符串）。
+  final String school;
+
   /// 最近一次登录时间。
   final DateTime? lastLoginAt;
 
@@ -65,6 +69,7 @@ class Account {
     String? cookie,
     RainClassroomServerType? server,
     bool? isRegistered,
+    String? school,
     DateTime? lastLoginAt,
   }) {
     return Account(
@@ -76,6 +81,7 @@ class Account {
       cookie: cookie ?? this.cookie,
       server: server ?? this.server,
       isRegistered: isRegistered ?? this.isRegistered,
+      school: school ?? this.school,
       lastLoginAt: lastLoginAt ?? this.lastLoginAt,
       createdAt: createdAt,
     );
@@ -90,6 +96,7 @@ class Account {
       'avatarUrl': avatarUrl,
       'server': server.name,
       'isRegistered': isRegistered,
+      'school': school,
       'lastLoginAt': lastLoginAt?.toIso8601String(),
       'createdAt': createdAt.toIso8601String(),
       // 注意: Cookie 不写入 JSON，单独安全存储。
@@ -105,6 +112,7 @@ class Account {
       avatarUrl: json['avatarUrl'] as String?,
       server: PlatformManager.parse(json['server'] as String?),
       isRegistered: json['isRegistered'] as bool? ?? true,
+      school: json['school'] as String? ?? '',
       lastLoginAt: json['lastLoginAt'] == null
           ? null
           : DateTime.tryParse(json['lastLoginAt'] as String),
