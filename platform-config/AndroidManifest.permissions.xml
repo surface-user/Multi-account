@@ -1,0 +1,32 @@
+<!--
+  雨课堂助手 —— Android 平台权限配置
+
+  位置: android/app/src/main/AndroidManifest.xml
+
+  在 <manifest> 标签内部、<application> 标签之前加入下面的 <uses-permission>
+  与 <uses-feature>。若你运行过 `flutter create .` 生成了默认清单，请把它生成的那份
+  与这里合并（默认清单里通常只有 <uses-permission android:name="android.permission.INTERNET"/>）。
+
+  mobile_scanner 在运行时会请求相机权限，但建议在清单中声明，以便在应用安装时提示。
+-->
+
+<!-- 访问网络（登录、课程、签到、课件加载都需要） -->
+<uses-permission android:name="android.permission.INTERNET"/>
+
+<!-- 获取网络状态（可选，便于网络判断） -->
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+<!-- 相机权限：动态二维码扫码签到 -->
+<uses-permission android:name="android.permission.CAMERA"/>
+
+<!-- 声明应用是否依赖相机。required=false 表示没有相机也能安装（如模拟器/部分平板）。 -->
+<uses-feature
+    android:name="android.hardware.camera"
+    android:required="false"/>
+<uses-feature
+    android:name="android.hardware.camera.autofocus"
+    android:required="false"/>
+
+<!-- 可选：如果你的 Flutter 版本 >= 3.7，下面这段可帮助在 Android 12+ 上正确配置组件。
+     作为参考保留，通常 flutter create . 会自动生成正确的 <application> 属性。
+-->

@@ -1,0 +1,51 @@
+# Flutter/Dart/Pub
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+# 注意：应用类项目保留 pubspec.lock 以便可复现构建，不再用 *.lock 忽略。
+
+# Android
+android/.gradle/
+android/.idea/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+android/key.properties
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/ephemeral/
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/Generated.xcconfig
+ios/Runner.xcworkspace/xcuserdata/
+ios/Runner.xcodeproj/xcuserdata/
+
+# IDE
+.idea/
+.vscode/
+.trae/
+*.swp
+*.save
+
+# 编译产物 & 归档（不纳入版本库）
+## 所有打包生成的 APK
+*.apk
+
+## 归档的 APK 历史
+apk_history/
+
+## 本地工具链（放入项目目录，非源码，体积巨大）
+flutter-sdk/
+.android-sdk/
+
+## 平台配置文档仅供参考（如需纳入可去掉下行注释并自行整理）
+# platform-config/
+

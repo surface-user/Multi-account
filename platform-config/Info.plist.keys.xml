@@ -1,0 +1,34 @@
+<!--
+  雨课堂助手 —— iOS 平台权限配置
+
+  位置: ios/Runner/Info.plist
+
+  在 <dict> 顶层加入下面的键。info_plist 中需要同时有 CFBundleName 等默认键，
+  这里只列出与功能相关的权限与网络配置。若你运行过 `flutter create .` 生成了默认
+  Info.plist，请把下面内容合并进去。
+
+  注意:
+  - 相机权限: NSCameraUsageDescription 是「扫码签到」必需的。
+  - 局域网/网络: 雨课堂接口通过 HTTPS 调用，默认无需 NSAppTransportSecurity 例外；
+    若你自建了 HTTP 后端，才需要 NSAllowsArbitraryLoads。
+-->
+
+<!-- 相机权限说明（扫码签到） -->
+<key>NSCameraUsageDescription</key>
+<string>用于扫描教师端签到二维码，完成动态二维码签到。</string>
+
+<!-- 保存图片到相册（可选：若后续做「保存课件页截图」等功能才需要） -->
+<key>NSPhotoLibraryAddUsageDescription</key>
+<string>用于保存课件截图到相册。</string>
+
+<!-- 读取图片（可选） -->
+<key>NSPhotoLibraryUsageDescription</key>
+<string>用于从相册读取签到二维码图片以识别签到。</string>
+
+<!-- 网络：默认 HTTPS 无需放开。此处仅为注释示意。
+<key>NSAppTransportSecurity</key>
+<dict>
+  <key>NSAllowsArbitraryLoads</key>
+  <false/>
+</dict>
+-->

@@ -1,0 +1,61 @@
+name: rain_classroom_helper
+description: 一个用于统一管理雨课堂（Rain Classroom）多账户、二维码签到与PPT查看的 Flutter 应用。
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.6.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # 网络请求
+  http: ^1.2.2
+
+  # 本地键值存储（账户列表元数据 + 会话 Cookie）
+  shared_preferences: ^2.3.2
+
+  # 状态管理
+  provider: ^6.1.2
+
+  # 二维码扫码（动态签到）
+  # 采用 course_helper 同款版本（7.2.0，CameraX 更新、对 Android 16 适配更好）
+  mobile_scanner: ^7.2.0
+
+  # 相机权限（在渲染扫码相机前明确请求，规避 mobile_scanner 权限错误未重置的 bug）
+  permission_handler: ^11.3.1
+
+  # 从相册选择二维码图片（相机失败时兜底，仿 course_helper 的 scan.dart）
+  image_picker: ^1.1.2
+
+  # 腾讯验证码（雨课堂密码/验证码登录需 ticket+rand，仿 course_helper）
+  flutter_tencent_captcha: ^0.1.2
+
+  # 图片缓存与展示（PPT 幻灯片）
+  cached_network_image: ^3.4.0
+
+  # 内嵌 WebView 兜底（复杂动态幻灯片 / 交互课件）
+  webview_flutter: ^4.8.0
+
+  # 格式化
+  intl: ^0.19.0
+
+  # 生成本地唯一 ID
+  uuid: ^4.5.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+# 构建兼容性：本机项目路径含空格，无法使用 Flutter 3.47 的 native-assets（objective_c）
+# 构建 hook。path_provider_foundation 仅在 macOS/iOS 使用，Android 运行时不需要，
+# 故锁定到不含 objective_c 的旧版本，从而移除 native-assets 依赖。
+dependency_overrides:
+  path_provider_foundation: 2.4.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
