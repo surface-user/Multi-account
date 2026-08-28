@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
 import '../models/checkin_info.dart';
@@ -37,8 +36,8 @@ class _QRCheckinPageState extends State<QRCheckinPage>
   String? _resultMessage;
   bool? _resultOk;
 
-  PermissionStatus? _permStatus;
-  bool _requesting = false;
+  // 相机是否仍在初始化（course_helper 用 _isInitializing 展示加载指示器）。
+  bool _isInitializing = true;
 
   @override
   void initState() {
@@ -63,45 +62,29 @@ class _QRCheckinPageState extends State<QRCheckinPage>
     if (!mounted) {
       return;
     }
-    // 先请求权限，明确授予后再创建并启动相机，避免 autoStart 竞态。
-    final status = await Permission.camera.request();
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _permStatus = status;
-      _requesting = true;
-    });
-
-    if (status == PermissionStatus.granted) {
-      try {
-        // 完全参照 course_helper 的控制器配置（autoStart:false，显式 start）。
-        _controller = MobileScannerController(
-          autoStart: false,
-          cameraResolution: const Size(1920, 1080),
-          detectionSpeed: DetectionSpeed.unrestricted,
-          formats: const [BarcodeFormat.qrCode],
-          autoZoom: true,
-        );
-        await _controller!.start();
-        if (mounted) {
-          setState(() {
-            _requesting = false;
-          });
-          _startScan();
-        }
-      } catch (error) {
-        debugPrint('camera start error: $error');
-        if (mounted) {
-          setState(() {
-            _requesting = false;
-          });
-        }
-      }
-    } else {
+    // 完全参照 course_helper：不在 Flutter 侧用 permission_handler 预申请权限，
+    // 而是交给 mobile_scanner 在 start() 时内部处理相机权限（自动弹系统授权框）。
+    // 避免与 mobile_scanner 内部权限流程竞争，导致 Android 16 上相机开了但预览黑屏。
+    try {
+      _controller = MobileScannerController(
+        autoStart: false,
+        cameraResolution: const Size(1920, 1080),
+        detectionSpeed: DetectionSpeed.unrestricted,
+        formats: const [BarcodeFormat.qrCode],
+        autoZoom: true,
+      );
+      await _controller!.start();
       if (mounted) {
         setState(() {
-          _requesting = false;
+          _isInitializing = false;
+        });
+        _startScan();
+      }
+    } catch (error) {
+      debugPrint('camera start error: $error');
+      if (mounted) {
+        setState(() {
+          _isInitializing = false;
         });
       }
     }
@@ -281,18 +264,6 @@ class _QRCheckinPageState extends State<QRCheckinPage>
     });
   }
 
-  Future<void> _openSettings() async {
-    await openAppSettings();
-  }
-
-  Future<void> _retryPermission() async {
-    setState(() {
-      _permStatus = null;
-      _requesting = true;
-    });
-    await _initializeScanner();
-  }
-
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -314,123 +285,77 @@ class _QRCheckinPageState extends State<QRCheckinPage>
   }
 
   Widget _buildCamera(ColorScheme scheme) {
-    if (_requesting || _permStatus == null) {
-      return const Center(
-        child: CircularProgressIndicator(color: Colors.white),
-      );
-    }
-
-    if (_permStatus == PermissionStatus.granted) {
-      final controller = _controller;
-      if (controller == null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _retryPermission();
-        });
-        return const Center(
-          child: CircularProgressIndicator(color: Colors.white),
-        );
-      }
-      return Stack(
-        children: [
-          MobileScanner(
-            controller: controller,
-            onDetect: _onDetect,
-            errorBuilder: (context, error) => _PermissionDenied(
-              error: error,
-              onRetry: _rescan,
+    // 完全参照 course_helper：MobileScanner 挂载、初始化时显示加载指示器。
+    // 不再用权限状态分支；权限/失败由 mobile_scanner 内部处理。
+    return Stack(
+      children: [
+        MobileScanner(
+          controller: _controller,
+          onDetect: _onDetect,
+        ),
+        if (_isInitializing)
+          const Center(
+            child: CircularProgressIndicator(color: Colors.white),
+          ),
+        // 扫描框（含动画扫描线）。
+        Center(
+          child: CustomPaint(
+            painter: QrScanBoxPainter(
+              boxLineColor: Theme.of(context).colorScheme.primary,
+              animationValue: _animationController?.value ?? 0,
+              isForward:
+                  _animationController?.status == AnimationStatus.forward,
+            ),
+            child: const SizedBox(
+              width: 240,
+              height: 240,
             ),
           ),
-          // 扫描框（含动画扫描线）。
-          Center(
-            child: CustomPaint(
-              painter: QrScanBoxPainter(
-                boxLineColor: Theme.of(context).colorScheme.primary,
-                animationValue: _animationController?.value ?? 0,
-                isForward:
-                    _animationController?.status == AnimationStatus.forward,
-              ),
-              child: const SizedBox(
-                width: 240,
-                height: 240,
-              ),
-            ),
-          ),
-          const Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: SafeArea(
-              child: Center(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text(
-                    '将二维码放入框内',
-                    style: TextStyle(
-                      color: Colors.white,
-                      backgroundColor: Colors.black54,
-                    ),
+        ),
+        const Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: SafeArea(
+            child: Center(
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  '将二维码放入框内',
+                  style: TextStyle(
+                    color: Colors.white,
+                    backgroundColor: Colors.black54,
                   ),
                 ),
               ),
             ),
           ),
-          // 底部控件：相册 + 取消（仿 course_helper）。
-          if (_info == null)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 24,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  IconButton(
-                    onPressed: _pickFromGallery,
-                    icon: const Icon(Icons.photo_library,
-                        color: Colors.white, size: 35),
-                  ),
-                  TextButton(
-                    onPressed: _cancel,
-                    child: const Text(
-                      '取消',
-                      style: TextStyle(color: Colors.white, fontSize: 18),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      );
-    }
-
-    // 权限被拒：引导重新授权或打开系统设置。
-    final permanentlyDenied = _permStatus == PermissionStatus.permanentlyDenied;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.no_photography, size: 48, color: Colors.grey),
-            const SizedBox(height: 12),
-            const Text('无法使用摄像头',
-                style: TextStyle(color: Colors.white)),
-            const SizedBox(height: 8),
-            Text(
-              permanentlyDenied ? '相机权限已被永久拒绝' : '请授予相机权限后才能扫码',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-            ),
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: permanentlyDenied ? _openSettings : _retryPermission,
-              icon: Icon(
-                permanentlyDenied ? Icons.settings : Icons.camera,
-                size: 18,
-              ),
-              label: Text(permanentlyDenied ? '打开系统设置' : '重新授权'),
-            ),
-          ],
         ),
-      ),
+        // 底部控件：相册 + 取消（仿 course_helper）。
+        if (_info == null)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 24,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                IconButton(
+                  onPressed: _pickFromGallery,
+                  icon: const Icon(Icons.photo_library,
+                      color: Colors.white, size: 35),
+                ),
+                TextButton(
+                  onPressed: _cancel,
+                  child: const Text(
+                    '取消',
+                    style: TextStyle(color: Colors.white, fontSize: 18),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 
@@ -640,41 +565,4 @@ class _ResultBanner extends StatelessWidget {
   }
 }
 
-class _PermissionDenied extends StatelessWidget {
-  const _PermissionDenied({required this.error, required this.onRetry});
 
-  final MobileScannerException error;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final detailMsg = error.errorDetails?.message ?? '';
-    final codeStr = error.errorCode.name;
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.no_photography, size: 48, color: Colors.grey),
-          const SizedBox(height: 12),
-          const Text('无法使用摄像头',
-              style: TextStyle(color: Colors.white)),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Text(
-              '$codeStr\n$detailMsg',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
-            ),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: onRetry,
-            icon: const Icon(Icons.refresh),
-            label: const Text('重试'),
-          ),
-        ],
-      ),
-    );
-  }
-}
