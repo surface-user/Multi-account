@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../config/app_config.dart';
 import '../models/course.dart';
 import '../models/slide.dart';
+import '../platform.dart';
 
 /// 登录结果。
 class LoginResult {
@@ -357,7 +358,17 @@ class RainApiService {
   /// 获取二维码登录信息（返回 { token, qrImage }）。pre-info 为 GET。
   Future<Map<String, dynamic>?> getQRCodeData() async {
     final uri = Uri.parse(AppConfig.url(AppConfig.qrPreInfoPath));
-    final response = await _client.get(uri, headers: _loginHeaders()).timeout(_timeout);
+    var response = await _client.get(uri, headers: _loginHeaders()).timeout(_timeout);
+    _logLogin('GET', AppConfig.qrPreInfoPath, null, response.statusCode,
+        utf8.decode(response.bodyBytes, allowMalformed: true));
+    if (_isAbnormalResponse(response)) {
+      response = await _client.get(uri, headers: _loginHeaders()).timeout(_timeout);
+      _logLogin('GET(retry)', AppConfig.qrPreInfoPath, null, response.statusCode,
+          utf8.decode(response.bodyBytes, allowMalformed: true));
+    }
+    if (_isAbnormalResponse(response)) {
+      return _abnormalBody(response);
+    }
     _loginJar.absorb(response);
     final data = _decodeBody(response);
     if (_code(data) == 0 && data['data'] is Map<String, dynamic>) {
@@ -381,9 +392,19 @@ class RainApiService {
   Future<Map<String, dynamic>?> _postLogin(
       String path, Map<String, dynamic> jsonBody) async {
     final uri = Uri.parse(AppConfig.url(path));
-    final response = await _client
+    var response = await _client
         .post(uri, headers: _loginHeaders(), body: jsonEncode(jsonBody))
         .timeout(_timeout);
+    _logLogin('POST', path, jsonBody, response.statusCode,
+        utf8.decode(response.bodyBytes, allowMalformed: true));
+    // 服务器偶发 404/5xx 空响应：重试一次；仍异常则返回明确错误信息（不再吞成空 map）。
+    if (_isAbnormalResponse(response)) {
+      response = await _client
+          .post(uri, headers: _loginHeaders(), body: jsonEncode(jsonBody))
+          .timeout(_timeout);
+      _logLogin('POST(retry)', path, jsonBody, response.statusCode,
+          utf8.decode(response.bodyBytes, allowMalformed: true));
+    }
     final setAuth = response.headers['set-auth'];
     if (setAuth != null && setAuth.isNotEmpty) {
       _bearerToken = setAuth;
@@ -392,6 +413,9 @@ class RainApiService {
     final cookie = _loginJar.header;
     if (cookie != null && cookie.isNotEmpty) {
       _lastLoginCookie = cookie;
+    }
+    if (_isAbnormalResponse(response)) {
+      return _abnormalBody(response);
     }
     return _decodeBody(response);
   }
@@ -413,6 +437,51 @@ class RainApiService {
     }
     return headers;
   }
+
+  // ---- 登录调试日志（采集各主域「已注册 / 未注册」响应，按时间裁剪，分析后可移除） ----
+  static final List<_LoginLogEntry> _loginLogs = [];
+
+  /// 日志仅保留最近 [kLogMaxAge] 内的条目，避免无限累积。
+  static const Duration _logMaxAge = Duration(minutes: 10);
+
+  /// 已收集的登录日志（供 UI「导出日志」复制到剪贴板）。
+  String get loginLog {
+    final b = StringBuffer();
+    for (final e in _loginLogs) {
+      b
+        ..writeln('[${e.time.toIso8601String()}] [${e.server}] ${e.method} ${e.path}')
+        ..writeln('  req: ${e.reqBody ?? ''}')
+        ..writeln('  http:${e.status}  resp: ${e.respBody}');
+    }
+    return b.toString();
+  }
+
+  /// 清空登录日志。
+  void clearLoginLog() => _loginLogs.clear();
+
+  /// 追加一条登录请求/响应日志，并剔除超过时间范围的旧日志。
+  void _logLogin(String method, String path, Object? reqBody, int status,
+      String respBody) {
+    final now = DateTime.now();
+    _loginLogs.add(_LoginLogEntry(
+        now, PlatformManager().currentServer.name, method, path, reqBody,
+        status, respBody));
+    _loginLogs.removeWhere((e) => now.difference(e.time) > _logMaxAge);
+  }
+
+  /// 响应是否「异常」（非 2xx 或 200 但空 body）——用于识别服务器 404/5xx 空响应。
+  bool _isAbnormalResponse(http.Response r) {
+    if (r.statusCode < 200 || r.statusCode >= 300) {
+      return true;
+    }
+    return utf8.decode(r.bodyBytes, allowMalformed: true).trim().isEmpty;
+  }
+
+  /// 读取响应体的「异常」提示。
+  Map<String, dynamic> _abnormalBody(http.Response r) => {
+        'code': -1,
+        'msg': '服务器响应异常（HTTP ${r.statusCode}），请重试或切换服务器',
+      };
 
   /// 取响应体里的 code（兼容 num / String）。
   int _code(Map<String, dynamic> data) {
@@ -541,4 +610,18 @@ class RainApiService {
     }
     return null;
   }
+}
+
+/// 单条登录调试日志。
+class _LoginLogEntry {
+  _LoginLogEntry(this.time, this.server, this.method, this.path, this.reqBody,
+      this.status, this.respBody);
+
+  final DateTime time;
+  final String server;
+  final String method;
+  final String path;
+  final Object? reqBody;
+  final int status;
+  final String respBody;
 }

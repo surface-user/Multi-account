@@ -122,6 +122,24 @@ class AccountTile extends StatelessWidget {
                             color: scheme.outline,
                           ),
                         ),
+                        if (!account.isRegistered) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: scheme.errorContainer,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '未注册',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: scheme.onErrorContainer,
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ],

@@ -141,6 +141,7 @@ class AppState extends ChangeNotifier {
     String? username,
     required RainClassroomServerType server,
     String? editAccountId,
+    bool isRegistered = true,
   }) async {
     final cookie = api.lastLoginCookie;
     if (cookie == null || cookie.isEmpty) {
@@ -178,6 +179,7 @@ class AppState extends ChangeNotifier {
         userId: userId,
         cookie: cookie,
         server: server,
+        isRegistered: isRegistered,
         lastLoginAt: DateTime.now(),
       );
       await _cookieStore.save(target.id, cookie);
@@ -190,6 +192,7 @@ class AppState extends ChangeNotifier {
           userId: userId,
           cookie: cookie,
           server: server,
+          isRegistered: isRegistered,
           lastLoginAt: DateTime.now(),
         );
         await _cookieStore.save(target.id, cookie);
@@ -201,6 +204,7 @@ class AppState extends ChangeNotifier {
           userId: userId,
           cookie: cookie,
           server: server,
+          isRegistered: isRegistered,
           lastLoginAt: DateTime.now(),
           createdAt: DateTime.now(),
         );
@@ -215,6 +219,7 @@ class AppState extends ChangeNotifier {
         userId: userId,
         cookie: cookie,
         server: server,
+        isRegistered: isRegistered,
         lastLoginAt: DateTime.now(),
         createdAt: DateTime.now(),
       );

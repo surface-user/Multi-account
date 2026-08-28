@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_tencent_captcha/flutter_tencent_captcha.dart';
 import 'package:provider/provider.dart';
 
@@ -134,6 +135,9 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
       _toast('请输入密码');
       return;
     }
+    // 确保全局服务器与页面选中的主域一致，登录请求才会打到正确主域。
+    // （setServer 会同步更新 _currentServer，无需 await。）
+    PlatformManager().setServer(_server);
     // 开始一次全新的登录链路，清空上次的登录 Cookie。
     context.read<AppState>().api.resetLoginJar();
     final okCaptcha = await _ensureCaptcha();
@@ -145,10 +149,15 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
       final data = await state.api.loginPassword(
           account, password, _ticket!, _randstr!);
       if (data != null && data['code'] == 0) {
+        final isRegistered = await _confirmUnregistered(data);
+        if (isRegistered == null) {
+          return; // 用户取消登录。
+        }
         final result = await state.persistLogin(
           username: account,
           server: _server,
           editAccountId: widget.editAccount?.id,
+          isRegistered: isRegistered,
         );
         _finish(result.ok, result.message);
       } else {
@@ -171,14 +180,22 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
     }
     await _run(() async {
       final state = context.read<AppState>();
+      // 确保全局服务器与页面选中的主域一致，登录请求才会打到正确主域。
+      // （setServer 会同步更新 _currentServer，无需 await。）
+      PlatformManager().setServer(_server);
       // 直接登录：让服务器一次性校验验证码。避免先调 /code/verify 把码消费掉，
       // 导致紧随的 /user/login/app 拿到已失效的码而失败（你在荷塘服务器上的症状）。
       final data = await state.api.loginCode(phone, code, _ticket ?? '', _randstr ?? '');
       if (data != null && data['code'] == 0) {
+        final isRegistered = await _confirmUnregistered(data);
+        if (isRegistered == null) {
+          return; // 用户取消登录。
+        }
         final result = await state.persistLogin(
           username: phone,
           server: _server,
           editAccountId: widget.editAccount?.id,
+          isRegistered: isRegistered,
         );
         _finish(result.ok, result.message);
       } else {
@@ -194,6 +211,9 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
       _toast('请输入手机号');
       return;
     }
+    // 确保全局服务器与页面选中的主域一致，发码请求才会打到正确主域。
+    // （setServer 会同步更新 _currentServer，无需 await。）
+    PlatformManager().setServer(_server);
     // 开始一次全新的登录链路，清空上次的登录 Cookie。
     context.read<AppState>().api.resetLoginJar();
     final okCaptcha = await _ensureCaptcha();
@@ -220,6 +240,9 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
     _qrToken = null;
     _qrImageUrl = null;
     _qrTimer?.cancel();
+    // 确保全局服务器与页面选中的主域一致，二维码 pre-info 才会打到正确主域。
+    // （setServer 会同步更新 _currentServer，无需 await。）
+    PlatformManager().setServer(_server);
     // 开始一次全新的登录链路，清空上次的登录 Cookie。
     context.read<AppState>().api.resetLoginJar();
     try {
@@ -350,6 +373,93 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
     });
   }
 
+  /// 弹出「复制日志 / 清空日志」。（日志自动按时间裁剪，保留最近 10 分钟。）
+  Future<void> _copyLoginLog() async {
+    final state = context.read<AppState>();
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.copy),
+              title: const Text('复制日志'),
+              subtitle: Text(
+                state.api.loginLog.trim().isEmpty
+                    ? '（暂无日志）'
+                    : '共 ${state.api.loginLog.length} 字符（仅保留最近 10 分钟）',
+              ),
+              enabled: state.api.loginLog.trim().isNotEmpty,
+              onTap: () => Navigator.pop(context, 'copy'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.clear),
+              title: const Text('清空日志'),
+              onTap: () => Navigator.pop(context, 'clear'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == 'copy') {
+      final log = state.api.loginLog;
+      if (log.trim().isEmpty) {
+        _toast('暂无登录日志');
+        return;
+      }
+      await Clipboard.setData(ClipboardData(text: log));
+      if (mounted) {
+        _toast('日志已复制，请粘贴发送');
+      }
+    } else if (action == 'clear') {
+      state.api.clearLoginLog();
+      if (mounted) {
+        _toast('日志已清空');
+      }
+    }
+  }
+
+  /// 登录成功后判断是否「未注册」（资料为空 = 该主域未绑定高校）。
+  ///
+  /// 返回：
+  /// - `true`  资料完整，已注册；
+  /// - `false` 资料为空（未注册），但用户选择「仍然登录」；
+  /// - `null`  资料为空且用户取消登录。
+  Future<bool?> _confirmUnregistered(Map<String, dynamic>? data) async {
+    final profile = data?['data'];
+    if (profile is! Map<String, dynamic>) {
+      return true; // 无资料信息，按已注册处理。
+    }
+    final name = (profile['name']?.toString() ?? '').trim();
+    final school = (profile['school']?.toString() ?? '').trim();
+    if (name.isNotEmpty || school.isNotEmpty) {
+      return true; // 资料完整，视为已注册。
+    }
+    if (!mounted) {
+      return null;
+    }
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('账号未注册'),
+        content: const Text('该主域下没有注册此账号（未绑定高校），可能无法签到。\n是否仍要继续登录？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('仍然登录'),
+          ),
+        ],
+      ),
+    );
+    // go==true → 继续但未注册；go==false/null → 取消。
+    return go == true ? false : null;
+  }
+
   /// 粘贴 Cookie 兜底。仍走「手动 Cookie」路径。
   Future<void> _pasteCookie() async {
     final result = await showDialog<Map<String, String>>(
@@ -399,6 +509,11 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
         title: Text(_isEdit ? '更新登录态' : '登录 / 添加账户'),
         actions: [
           IconButton(
+            tooltip: '复制登录日志',
+            icon: const Icon(Icons.bug_report_outlined),
+            onPressed: _copyLoginLog,
+          ),
+          IconButton(
             tooltip: '粘贴 Cookie 登录',
             icon: const Icon(Icons.content_paste),
             onPressed: _pasteCookie,
@@ -414,6 +529,8 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
               current: _server,
               onChanged: (s) {
                 setState(() => _server = s);
+                // 同步全局服务器，保证后续登录请求打到选中的主域。
+                PlatformManager().setServer(s);
               },
             ),
             const SizedBox(height: 20),
