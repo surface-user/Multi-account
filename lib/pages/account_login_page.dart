@@ -161,7 +161,7 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
         );
         _finish(result.ok, result.message);
       } else {
-        _toast(_msg(data) ?? '登录失败（code=${data?['code']}）');
+        _showLoginError(data, fallback: '登录失败（code=${data?['code']}）');
       }
     });
   }
@@ -199,7 +199,7 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
         );
         _finish(result.ok, result.message);
       } else {
-        _toast(_msg(data) ?? '登录失败（code=${data?['code']}）');
+        _showLoginError(data, fallback: '登录失败（code=${data?['code']}）');
       }
     });
   }
@@ -228,7 +228,7 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
         _toast('验证码已发送');
         _startCountdown();
       } else {
-        _toast(_msg(data) ?? '发送验证码失败');
+        _showLoginError(data, fallback: '发送验证码失败');
       }
     });
   }
@@ -499,6 +499,38 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
       }
     }
     return null;
+  }
+
+  /// 登录失败提示：如果是服务器响应异常（如节点 404），用中间弹窗说明；
+  /// 其它情况用普通 toast。
+  void _showLoginError(Map<String, dynamic>? data,
+      {String fallback = '登录失败，请重试'}) {
+    final msg = _msg(data);
+    if (msg == null || !msg.startsWith('服务器响应异常')) {
+      _toast(msg ?? fallback);
+      return;
+    }
+    final is404 = msg.contains('404');
+    final content = is404
+        ? '登录接口所在服务器节点返回了 404（接口不稳定）。\n'
+            '这通常是该校区服务器节点暂时异常，不是账号、密码或网络的问题。\n\n'
+            '建议：\n· 稍后再试\n· 改用「二维码登录」登录'
+        : '登录接口所在服务器节点响应异常。\n'
+            '通常是服务器节点暂时异常，不是账号或网络问题。\n\n'
+            '建议：\n· 稍后再试\n· 改用「二维码登录」登录';
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('服务器异常'),
+        content: Text(content),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
