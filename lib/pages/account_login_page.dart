@@ -288,19 +288,25 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
       if (!mounted) {
         return;
       }
-      if (data != null) {
+      if (data != null && data['code'] == 0) {
         // 扫码成功：持久化账户。
         _qrTimer?.cancel();
         _qrActive = false;
+        final isRegistered = await _confirmUnregistered(data);
+        if (isRegistered == null) {
+          _toast('已取消登录'); // 用户取消。
+          return;
+        }
         final result = await state.persistLogin(
           username: null,
           server: _server,
           editAccountId: widget.editAccount?.id,
+          isRegistered: isRegistered,
         );
         _finish(result.ok, result.message);
         return;
       }
-      // 超时/未扫码，刷新二维码。
+      // 超时/未扫码/异常，刷新二维码。
       await _refreshQr();
     } catch (e) {
       if (!mounted) {
@@ -420,6 +426,23 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
     }
   }
 
+  /// 从登录响应里解析「用户资料」map。兼容两种结构：
+  /// - `data.data` 直接就是 profile（`{id, name, school, ...}`，短信/密码登录）；
+  /// - `data.data.user_profile` 嵌套（二维码/用户信息接口）。
+  Map<String, dynamic>? _profileOf(Map<String, dynamic>? data) {
+    final d = data?['data'];
+    if (d is Map<String, dynamic>) {
+      if (d.containsKey('name') || d.containsKey('school')) {
+        return d;
+      }
+      final up = d['user_profile'];
+      if (up is Map<String, dynamic>) {
+        return up;
+      }
+    }
+    return null;
+  }
+
   /// 登录成功后判断是否「未注册」（资料为空 = 该主域未绑定高校）。
   ///
   /// 返回：
@@ -427,8 +450,8 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
   /// - `false` 资料为空（未注册），但用户选择「仍然登录」；
   /// - `null`  资料为空且用户取消登录。
   Future<bool?> _confirmUnregistered(Map<String, dynamic>? data) async {
-    final profile = data?['data'];
-    if (profile is! Map<String, dynamic>) {
+    final profile = _profileOf(data);
+    if (profile == null) {
       return true; // 无资料信息，按已注册处理。
     }
     final name = (profile['name']?.toString() ?? '').trim();
