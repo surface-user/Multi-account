@@ -149,7 +149,7 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
       final data = await state.api.loginPassword(
           account, password, _ticket!, _randstr!);
       if (data != null && data['code'] == 0) {
-        final isRegistered = await _confirmUnregistered(data);
+        final isRegistered = await _confirmUnregistered();
         if (isRegistered == null) {
           return; // 用户取消登录。
         }
@@ -187,7 +187,7 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
       // 导致紧随的 /user/login/app 拿到已失效的码而失败（你在荷塘服务器上的症状）。
       final data = await state.api.loginCode(phone, code, _ticket ?? '', _randstr ?? '');
       if (data != null && data['code'] == 0) {
-        final isRegistered = await _confirmUnregistered(data);
+        final isRegistered = await _confirmUnregistered();
         if (isRegistered == null) {
           return; // 用户取消登录。
         }
@@ -292,7 +292,7 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
         // 扫码成功：持久化账户。
         _qrTimer?.cancel();
         _qrActive = false;
-        final isRegistered = await _confirmUnregistered(data);
+        final isRegistered = await _confirmUnregistered();
         if (isRegistered == null) {
           _toast('已取消登录'); // 用户取消。
           return;
@@ -426,33 +426,26 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
     }
   }
 
-  /// 从登录响应里解析「用户资料」map。兼容两种结构：
-  /// - `data.data` 直接就是 profile（`{id, name, school, ...}`，短信/密码登录）；
-  /// - `data.data.user_profile` 嵌套（二维码/用户信息接口）。
-  Map<String, dynamic>? _profileOf(Map<String, dynamic>? data) {
-    final d = data?['data'];
-    if (d is Map<String, dynamic>) {
-      if (d.containsKey('name') || d.containsKey('school')) {
-        return d;
-      }
-      final up = d['user_profile'];
-      if (up is Map<String, dynamic>) {
-        return up;
-      }
-    }
-    return null;
-  }
-
   /// 登录成功后判断是否「未注册」（资料为空 = 该主域未绑定高校）。
+  ///
+  /// 判断基于**登录后拉取的真实用户资料**（[fetchUserInfo]），而不是登录响应里的资料：
+  /// 二维码登录响应（`/api/v3/user/login`）里 `name/school` 恒为空，即使账号已注册，
+  /// 用它会误判为「未注册」；真实资料在登录后由用户信息接口返回。
   ///
   /// 返回：
   /// - `true`  资料完整，已注册；
   /// - `false` 资料为空（未注册），但用户选择「仍然登录」；
   /// - `null`  资料为空且用户取消登录。
-  Future<bool?> _confirmUnregistered(Map<String, dynamic>? data) async {
-    final profile = _profileOf(data);
+  Future<bool?> _confirmUnregistered() async {
+    final state = context.read<AppState>();
+    Map<String, dynamic>? profile;
+    try {
+      profile = await state.api.fetchUserInfo(cookie: state.api.lastLoginCookie);
+    } catch (_) {
+      profile = null;
+    }
     if (profile == null) {
-      return true; // 无资料信息，按已注册处理。
+      return true; // 取不到资料，不打扰，按已注册处理。
     }
     final name = (profile['name']?.toString() ?? '').trim();
     final school = (profile['school']?.toString() ?? '').trim();
