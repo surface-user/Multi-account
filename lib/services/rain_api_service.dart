@@ -120,10 +120,28 @@ class RainApiService {
 
   String? get lastLoginCookie => _lastLoginCookie;
 
+  /// 登录链路共用的 Cookie Jar（send → verify → login 贯穿携带 csrftoken，
+  /// 对齐 course_helper 的临时 tempCookieJar，避免登录接口因缺失 CSRF Cookie 被拒）。
+  final CookieJar _loginJar = CookieJar();
+
+  /// 开始一次全新的登录链路前清空登录 Cookie Jar。
+  void resetLoginJar() => _loginJar.clear();
+
   Map<String, String> _baseHeaders() {
+    // 雨课堂 App 身份头（对齐 course_helper 的 HeadersManager.rainClassroomHeaders）。
+    // 缺少这些头时，/api/v3/user/login/app 等接口会拒绝登录（发验证码等宽松接口则不校验）。
     return {
-      'User-Agent': AppConfig.userAgent,
-      'Accept': 'application/json, text/plain, */*',
+      'user-agent': 'Android',
+      'brand': 'google Pixel 9 Pro',
+      'uuid': '',
+      'buildnumber': '1610',
+      'xtua': 'client=app&tag=1.3.3&platform=Android',
+      'systemversion': '16',
+      'incremental': '14624737',
+      'accept': 'application/json',
+      'isphysicaldevice': 'true',
+      'xtbz': 'ykt',
+      'x-client': 'app',
       'Content-Type': 'application/json; charset=utf-8',
     };
   }
@@ -288,38 +306,28 @@ class RainApiService {
   /// 发送短信验证码（需腾讯验证码的 ticket/rand，仿 course_helper）。
   Future<Map<String, dynamic>?> sendSmsCode(
       String phone, String ticket, String rand) async {
-    final uri = Uri.parse(AppConfig.url(AppConfig.smsCodeSendPath));
-    final body = jsonEncode({
+    return _postLogin(AppConfig.smsCodeSendPath, {
       'phoneNumber': phone,
       'email': '',
       'ticket': ticket,
       'rand': rand,
     });
-    final response = await _client
-        .post(uri, headers: _baseHeaders(), body: body)
-        .timeout(_timeout);
-    return _decodeBody(response);
   }
 
   /// 校验短信验证码（发送后，登录前）。
   Future<Map<String, dynamic>?> verifySmsCode(String phone, String code) async {
-    final uri = Uri.parse(AppConfig.url(AppConfig.smsCodeVerifyPath));
-    final body = jsonEncode({
+    return _postLogin(AppConfig.smsCodeVerifyPath, {
       'phoneNumber': phone,
       'email': '',
       'code': code,
     });
-    final response = await _client
-        .post(uri, headers: _baseHeaders(), body: body)
-        .timeout(_timeout);
-    return _decodeBody(response);
   }
 
   /// 密码登录（需腾讯验证码 ticket/rand）。account 可为手机号或邮箱。
   Future<Map<String, dynamic>?> loginPassword(
       String account, String password, String ticket, String rand) async {
     final isEmail = account.contains('@');
-    final body = jsonEncode({
+    return _postLogin(AppConfig.loginPath, {
       'type': isEmail ? 2 : 1,
       'phoneNumber': isEmail ? '' : account,
       'password': _encodePassword(password),
@@ -329,13 +337,12 @@ class RainApiService {
       'ticket': ticket,
       'rand': rand,
     });
-    return _postLogin(AppConfig.loginPath, body);
   }
 
   /// 短信验证码登录（type=3）。
   Future<Map<String, dynamic>?> loginCode(
       String phone, String code, String ticket, String rand) async {
-    final body = jsonEncode({
+    return _postLogin(AppConfig.loginPath, {
       'type': 3,
       'phoneNumber': phone,
       'password': '',
@@ -345,15 +352,13 @@ class RainApiService {
       'ticket': ticket,
       'rand': rand,
     });
-    return _postLogin(AppConfig.loginPath, body);
   }
 
-  /// 获取二维码登录信息（返回 { token, qrImage }）。
+  /// 获取二维码登录信息（返回 { token, qrImage }）。pre-info 为 GET。
   Future<Map<String, dynamic>?> getQRCodeData() async {
     final uri = Uri.parse(AppConfig.url(AppConfig.qrPreInfoPath));
-    final response = await _client
-        .post(uri, headers: _baseHeaders())
-        .timeout(_timeout);
+    final response = await _client.get(uri, headers: _loginHeaders()).timeout(_timeout);
+    _loginJar.absorb(response);
     final data = _decodeBody(response);
     if (_code(data) == 0 && data['data'] is Map<String, dynamic>) {
       return data['data'] as Map<String, dynamic>;
@@ -363,30 +368,50 @@ class RainApiService {
 
   /// 二维码登录轮询（带 token）。code==0 表示扫码成功，返回 data。
   Future<Map<String, dynamic>?> loginQRCode(String token) async {
-    final body = jsonEncode({'token': token});
-    return _postLogin(AppConfig.qrLoginPath, body);
+    return _postLogin(AppConfig.qrLoginPath, {
+      'token': token,
+    });
   }
 
-  /// 统一处理登录 POST，捕获会话 Cookie 并与 Bearer Token 一并保存。
-  Future<Map<String, dynamic>?> _postLogin(String path, String body) async {
-    _jar.clear();
-    _bearerToken = null;
+  /// 统一处理登录链路 POST。
+  ///
+  /// 登录阶段共用 [_loginJar]：请求会带上该 Jar 已有的 Cookie 与 x-csrftoken，
+  /// 响应再把它新设置的 Cookie 写回 Jar。这样 send → verify → login 全程携带
+  /// csrftoken，避免登录接口因 CSRF 校验失败返回非预期结构。
+  Future<Map<String, dynamic>?> _postLogin(
+      String path, Map<String, dynamic> jsonBody) async {
     final uri = Uri.parse(AppConfig.url(path));
     final response = await _client
-        .post(uri, headers: _baseHeaders(), body: body)
+        .post(uri, headers: _loginHeaders(), body: jsonEncode(jsonBody))
         .timeout(_timeout);
     final setAuth = response.headers['set-auth'];
     if (setAuth != null && setAuth.isNotEmpty) {
       _bearerToken = setAuth;
     }
-    final jar = CookieJar();
-    jar.absorb(response);
-    final cookie = jar.header;
+    _loginJar.absorb(response);
+    final cookie = _loginJar.header;
     if (cookie != null && cookie.isNotEmpty) {
-      _jar.setFromString(cookie);
       _lastLoginCookie = cookie;
     }
     return _decodeBody(response);
+  }
+
+  /// 登录链路请求头：App 身份头 + 登录 Jar 里的 Cookie 与 x-csrftoken。
+  Map<String, String> _loginHeaders() {
+    final headers = _baseHeaders();
+    final cookie = _loginJar.header;
+    if (cookie != null && cookie.isNotEmpty) {
+      headers['Cookie'] = cookie;
+      final csrf = _loginJar.value('csrftoken');
+      if (csrf != null && csrf.isNotEmpty) {
+        headers['x-csrftoken'] = csrf;
+      }
+      final session = _loginJar.value('sessionid');
+      if (session != null && session.isNotEmpty) {
+        headers['sessionid'] = session;
+      }
+    }
+    return headers;
   }
 
   /// 取响应体里的 code（兼容 num / String）。

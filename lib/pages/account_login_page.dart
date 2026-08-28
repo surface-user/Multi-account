@@ -134,6 +134,8 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
       _toast('请输入密码');
       return;
     }
+    // 开始一次全新的登录链路，清空上次的登录 Cookie。
+    context.read<AppState>().api.resetLoginJar();
     final okCaptcha = await _ensureCaptcha();
     if (!okCaptcha) {
       return;
@@ -150,7 +152,7 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
         );
         _finish(result.ok, result.message);
       } else {
-        _toast(_msg(data) ?? '登录失败，请检查账号密码');
+        _toast(_msg(data) ?? '登录失败（code=${data?['code']}）');
       }
     });
   }
@@ -169,12 +171,8 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
     }
     await _run(() async {
       final state = context.read<AppState>();
-      // 先校验短信验证码。
-      final verify = await state.api.verifySmsCode(phone, code);
-      if (verify == null || verify['code'] != 0) {
-        _toast(_msg(verify) ?? '验证码验证失败');
-        return;
-      }
+      // 直接登录：让服务器一次性校验验证码。避免先调 /code/verify 把码消费掉，
+      // 导致紧随的 /user/login/app 拿到已失效的码而失败（你在荷塘服务器上的症状）。
       final data = await state.api.loginCode(phone, code, _ticket ?? '', _randstr ?? '');
       if (data != null && data['code'] == 0) {
         final result = await state.persistLogin(
@@ -184,7 +182,7 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
         );
         _finish(result.ok, result.message);
       } else {
-        _toast(_msg(data) ?? '登录失败，请检查验证码');
+        _toast(_msg(data) ?? '登录失败（code=${data?['code']}）');
       }
     });
   }
@@ -196,6 +194,8 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
       _toast('请输入手机号');
       return;
     }
+    // 开始一次全新的登录链路，清空上次的登录 Cookie。
+    context.read<AppState>().api.resetLoginJar();
     final okCaptcha = await _ensureCaptcha();
     if (!okCaptcha) {
       return;
@@ -220,6 +220,8 @@ class _AccountLoginPageState extends State<AccountLoginPage> {
     _qrToken = null;
     _qrImageUrl = null;
     _qrTimer?.cancel();
+    // 开始一次全新的登录链路，清空上次的登录 Cookie。
+    context.read<AppState>().api.resetLoginJar();
     try {
       final state = context.read<AppState>();
       final data = await state.api.getQRCodeData();
