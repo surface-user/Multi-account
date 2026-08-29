@@ -32,9 +32,7 @@ class AccountListPage extends StatelessWidget {
             tooltip: '更多',
             onSelected: (value) {
               if (value == 'about') {
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const AboutPage()),
-                );
+                showAboutInfo(context);
               }
             },
             itemBuilder: (_) => const [
