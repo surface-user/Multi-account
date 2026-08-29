@@ -5,6 +5,7 @@ import '../models/account.dart';
 import '../state/app_state.dart';
 import '../utils/string_utils.dart';
 import '../widgets/account_tile.dart';
+import 'about_page.dart';
 import 'account_login_page.dart';
 import 'course_list_page.dart';
 import 'qr_checkin_page.dart';
@@ -26,6 +27,22 @@ class AccountListPage extends StatelessWidget {
             tooltip: '添加账户',
             icon: const Icon(Icons.add),
             onPressed: () => _openLogin(context),
+          ),
+          PopupMenuButton<String>(
+            tooltip: '更多',
+            onSelected: (value) {
+              if (value == 'about') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const AboutPage()),
+                );
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'about',
+                child: Text('关于'),
+              ),
+            ],
           ),
         ],
       ),

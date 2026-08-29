@@ -10,6 +10,18 @@ class AppConfig {
   /// 腾讯验证码 AppId（雨课堂密码/验证码登录需 ticket+rand，仿 course_helper）。
   static const String tCaptchaAppId = '2091064951';
 
+  /// 应用版本（「关于」页展示，与 pubspec.yaml 对齐）。
+  static const String appVersion = '1.0.0+1';
+
+  /// 开发者名称（「关于」页展示）。
+  static const String developerName = 'surface-user';
+
+  /// 开发者主页（「关于」页点击跳转）。
+  static const String developerUrl = 'https://github.com/surface-user';
+
+  /// 应用一句话简介。
+  static const String appDescription = '一款用于雨课堂多账号管理与签到的工具。';
+
   /// 当前服务器主域（跟随 [PlatformManager] 的当前服务器，支持多服务器）。
   static String get baseUrl => PlatformManager().baseUrl;
 

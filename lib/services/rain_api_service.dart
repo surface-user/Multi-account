@@ -121,6 +121,9 @@ class RainApiService {
 
   String? get lastLoginCookie => _lastLoginCookie;
 
+  /// 持久化的设备 UUID，用作请求头 `uuid`（空串会被雨课堂视为非官方客户端）。
+  String _uuid = '';
+
   /// 登录链路共用的 Cookie Jar（send → verify → login 贯穿携带 csrftoken，
   /// 对齐 course_helper 的临时 tempCookieJar，避免登录接口因缺失 CSRF Cookie 被拒）。
   final CookieJar _loginJar = CookieJar();
@@ -134,7 +137,7 @@ class RainApiService {
     return {
       'user-agent': 'Android',
       'brand': 'google Pixel 9 Pro',
-      'uuid': '',
+      'uuid': _uuid,
       'buildnumber': '1610',
       'xtua': 'client=app&tag=1.3.3&platform=Android',
       'systemversion': '16',
@@ -229,6 +232,27 @@ class RainApiService {
       // 读不到本地存储时也生成一个，保证登录体字段非空。
       return const Uuid().v4();
     }
+  }
+
+  /// 加载并持久化设备 UUID（请求头 `uuid`），启动时调用一次即可。
+  Future<String> ensureDeviceUuid() async {
+    if (_uuid.isNotEmpty) {
+      return _uuid;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      const key = 'rain_device_uuid';
+      var saved = prefs.getString(key);
+      if (saved == null || saved.isEmpty) {
+        saved = const Uuid().v4();
+        await prefs.setString(key, saved);
+      }
+      _uuid = saved;
+    } catch (_) {
+      // 读不到本地存储也生成一个，避免请求头 uuid 为空串。
+      _uuid = const Uuid().v4();
+    }
+    return _uuid;
   }
 
   /// 账号密码登录。

@@ -44,6 +44,9 @@ dependencies:
   # 生成本地唯一 ID
   uuid: ^4.5.1
 
+  # 「关于」页打开开发者 GitHub 主页
+  url_launcher: ^6.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

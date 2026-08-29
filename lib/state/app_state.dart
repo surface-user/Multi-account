@@ -71,6 +71,8 @@ class AppState extends ChangeNotifier {
       // 让全局服务器跟随当前账户，保证后续请求的 Cookie 域匹配。
       await PlatformManager().setServer(_accounts.first.server);
     }
+    // 初始化持久化设备 UUID（请求头 uuid 不再为空）。
+    await api.ensureDeviceUuid();
     _loaded = true;
     notifyListeners();
   }
