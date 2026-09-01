@@ -1,10 +1,8 @@
-import 'dart:convert';
-
 /// 从扫码结果中解析出的签到信息。
 ///
-/// 雨课堂的签到二维码加密/编码格式并不固定（可能是 URL、JSON、或一串带校验的
-/// token），因此该模型尽量保留原始内容，并给出最常见的解析字段，方便后续按平台
-/// 实际格式调整。
+/// 依据 course_helper：雨课堂签到二维码内容是一个 URL，其 baseUrl 必须包含
+/// [rainCheckinUrlPattern] 才视为可上报的签到码；其它内容（微信跳转链、纯 token、
+/// JSON 等）一律视为不可用，避免把错误的二维码内容当成签到码上报。
 class CheckinInfo {
   CheckinInfo({
     required this.raw,
@@ -13,7 +11,12 @@ class CheckinInfo {
     this.checkinCode,
     this.signInType,
     this.isEncrypted = true,
+    this.isValidRainCheckin = false,
   });
+
+  /// 雨课堂签到二维码 URL 的特征路径（与 course_helper 一致）。
+  static const String rainCheckinUrlPattern =
+      '.yuketang.cn/api/v3/lesson/check-in/dynamic-qr-code';
 
   /// 扫码得到的原始字符串。
   final String raw;
@@ -30,100 +33,59 @@ class CheckinInfo {
   /// 签到类型枚举值（如正常签到/签退）。
   final String? signInType;
 
-  /// 是否为加密/动态 token（多数雨课堂扫码属于此类）。
+  /// 是否为加密/动态 token。
   final bool isEncrypted;
 
-  /// 是否解析出了可供上报的有效字段。
-  /// 雨课堂扫码内容为一段 URL，故只要有原始内容即可上报；字段仅作展示。
-  bool get isUsable => raw.trim().isNotEmpty;
+  /// 是否被识别为雨课堂签到二维码（URL 的 baseUrl 匹配 [rainCheckinUrlPattern]）。
+  /// 只有为 true 才允许上报签到。
+  final bool isValidRainCheckin;
 
-  /// 从扫码字符串解析。依次尝试 JSON、URL 查询参数、纯 token 三种方式。
+  /// 是否可上报签到（是雨课堂签到二维码）。
+  bool get isUsable => isValidRainCheckin;
+
+  /// 从扫码字符串解析。仅 URL 且 baseUrl 匹配雨课堂签到特征路径才视为可用。
   static CheckinInfo parse(String raw) {
     final text = raw.trim();
     if (text.isEmpty) {
       return CheckinInfo(raw: text);
     }
 
-    // 1) JSON 形式。
-    final jsonMap = _tryParseJson(text);
-    if (jsonMap != null) {
-      return _fromMap(text, jsonMap);
+    final uri = Uri.tryParse(text);
+    if (uri == null || uri.host.isEmpty) {
+      // 非 URL（纯 token / JSON 等）：雨课堂签到必须是上式 URL，视为不可用。
+      return CheckinInfo(raw: text);
     }
 
-    // 2) URL 形式（提取查询参数）。
-    final urlMap = _tryParseUrl(text);
-    if (urlMap != null) {
-      return _fromMap(text, urlMap);
+    final baseUrl = uri.origin + uri.path;
+    final isValid = baseUrl.contains(rainCheckinUrlPattern);
+    if (!isValid) {
+      // 非雨课堂签到二维码：不提取字段、不可用（避免把别的二维码误标成签到码）。
+      return CheckinInfo(raw: text, isEncrypted: true);
     }
 
-    // 3) 当作纯 token / 动态码。
+    final params = uri.queryParameters;
     return CheckinInfo(
       raw: text,
-      checkinCode: text,
-      checkinId: text,
+      classId: _pick(
+          params, ['classId', 'class_id', 'courseId', 'course_id', 'classroom_id']),
+      checkinId: _pick(params,
+          ['checkinId', 'checkin_id', 'signId', 'sign_id', 'id', 'lessonId', 'lesson_id']),
+      checkinCode:
+          _pick(params, ['checkinCode', 'checkin_code', 'code', 'secret']),
+      signInType: _pick(params, ['signInType', 'sign_in_type', 'type']),
       isEncrypted: true,
+      isValidRainCheckin: true,
     );
   }
 
-  static Map<String, dynamic>? _tryParseJson(String text) {
-    final start = text.indexOf('{');
-    if (start < 0) {
-      return null;
-    }
-    final end = text.lastIndexOf('}');
-    if (end <= start) {
-      return null;
-    }
-    try {
-      final obj = jsonDecode(text.substring(start, end + 1));
-      if (obj is Map<String, dynamic>) {
-        return obj;
+  static String? _pick(Map<String, String> map, List<String> keys) {
+    for (final key in keys) {
+      final v = map[key];
+      if (v != null && v.isNotEmpty) {
+        return v;
       }
-    } catch (_) {
-      // 非合法 JSON，继续。
     }
     return null;
-  }
-
-  static Map<String, dynamic>? _tryParseUrl(String text) {
-    try {
-      final uri = Uri.tryParse(text);
-      if (uri == null || uri.queryParameters.isEmpty) {
-        return null;
-      }
-      return uri.queryParameters;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  static CheckinInfo _fromMap(String raw, Map<String, dynamic> map) {
-    String? pick(List<String> keys) {
-      for (final key in keys) {
-        final v = map[key];
-        if (v != null && '$v'.isNotEmpty) {
-          return '$v';
-        }
-      }
-      return null;
-    }
-
-    final id = pick(['checkinId', 'checkin_id', 'signId', 'sign_id', 'id']);
-    final code = pick(['checkinCode', 'checkin_code', 'code', 'secret']);
-    final classId = pick(['classId', 'class_id', 'courseId', 'course_id']);
-    final type = pick(['signInType', 'sign_in_type', 'type']);
-    final isEncrypted = (map['encrypted'] == true) ||
-        (map['isEncrypted'] == true) ||
-        (id != null && code == null);
-
-    return CheckinInfo(
-      raw: raw,
-      classId: classId,
-      checkinId: id,
-      checkinCode: code,
-      signInType: type,
-      isEncrypted: isEncrypted,
-    );
   }
 
   @override

@@ -177,8 +177,16 @@ class _QRCheckinPageState extends State<QRCheckinPage>
     final info = CheckinInfo.parse(raw);
     setState(() {
       _info = info;
-      _resultMessage = null;
-      _resultOk = null;
+      if (info.isUsable) {
+        _resultMessage = null;
+        _resultOk = null;
+      } else if (info.raw.trim().isEmpty) {
+        _resultMessage = '未解析出有效内容';
+        _resultOk = false;
+      } else {
+        _resultMessage = '已识别到内容，但不是雨课堂签到二维码';
+        _resultOk = false;
+      }
     });
   }
 
@@ -403,7 +411,9 @@ class _QRCheckinPageState extends State<QRCheckinPage>
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton(
-                    onPressed: _submitting ? null : _submit,
+                    onPressed: (_submitting || !(_info?.isUsable ?? false))
+                        ? null
+                        : _submit,
                     child: _submitting
                         ? const SizedBox(
                             width: 18,

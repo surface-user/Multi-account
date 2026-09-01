@@ -44,6 +44,9 @@ class CheckinService {
     if (qrUrl.isEmpty) {
       return CheckinResult.fail('扫码结果为空，请重新扫码');
     }
+    if (!info.isUsable) {
+      return CheckinResult.fail('这不是雨课堂签到二维码');
+    }
 
     try {
       // 第一步：扫描，拿 lessonId。
@@ -59,10 +62,13 @@ class CheckinService {
     }
   }
 
-  /// 是否解析出可上报的有效结果（二维码内容非空即可）。
+  /// 是否解析出可上报的有效结果（为雨课堂签到二维码）。
   CheckinResult validate(CheckinInfo info) {
     if (info.raw.trim().isEmpty) {
       return CheckinResult.fail('未从二维码中解析出有效内容');
+    }
+    if (!info.isUsable) {
+      return CheckinResult.fail('这不是雨课堂签到二维码');
     }
     return CheckinResult.ok();
   }
