@@ -12,10 +12,12 @@ import '../state/app_state.dart';
 /// 拉取课程课件（幻灯片）列表，以可翻页的 [PageView] 整页展示。静态图使用
 /// [CachedNetworkImage]，动态/交互课件则回退到 WebView 展示。
 class PPTViewerPage extends StatefulWidget {
-  const PPTViewerPage({super.key, required this.course, this.cookie});
+  const PPTViewerPage(
+      {super.key, required this.course, this.cookie, this.uid});
 
   final Course course;
   final String? cookie;
+  final String? uid;
 
   @override
   State<PPTViewerPage> createState() => _PPTViewerPageState();
@@ -45,7 +47,7 @@ class _PPTViewerPageState extends State<PPTViewerPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
         final slides = await state.api.fetchSlides(widget.course,
-            cookie: widget.cookie);
+            cookie: widget.cookie, uid: widget.uid);
         if (!mounted) {
           return;
         }

@@ -18,6 +18,7 @@ class _CourseListPageState extends State<CourseListPage> {
   bool _loading = false;
   String? _error;
   String? _cookie;
+  String? _uid;
 
   @override
   void initState() {
@@ -40,9 +41,11 @@ class _CourseListPageState extends State<CourseListPage> {
 
     final cookie = await state.cookieOf(account.id);
     _cookie = cookie;
+    _uid = account.userId;
 
     try {
-      final courses = await state.api.fetchCourses(cookie: cookie);
+      final courses = await state.api.fetchCourses(
+          cookie: cookie, uid: account.userId);
       if (!mounted) {
         return;
       }
@@ -92,7 +95,11 @@ class _CourseListPageState extends State<CourseListPage> {
             onTap: () {
               Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => PPTViewerPage(course: course, cookie: _cookie),
+                  builder: (_) => PPTViewerPage(
+                    course: course,
+                    cookie: _cookie,
+                    uid: _uid,
+                  ),
                 ),
               );
             },

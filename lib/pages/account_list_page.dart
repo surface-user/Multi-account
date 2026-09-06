@@ -44,29 +44,30 @@ class AccountListPage extends StatelessWidget {
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: () => state.load(),
-        child: ListView(
-          padding: const EdgeInsets.only(bottom: 96),
-          children: [
-            if (current != null) _CurrentAccountCard(account: current),
-            if (state.accounts.isEmpty)
-              const _EmptyState()
-            else ...[
-              const _SectionHeader(title: '全部账户'),
-              for (final account in state.accounts)
-                AccountTile(
-                  account: account,
-                  isCurrent: account.id == state.currentAccountId,
-                  onTap: () => state.switchAccount(account.id),
-                  onEdit: () => _editCookie(context, account),
-                  onDelete: () =>
-                      _confirmDelete(context, state, account),
-                ),
-            ],
-          ],
-        ),
-      ),
+      body: !state.loaded
+          ? const _SessionValidationProgress()
+          : RefreshIndicator(
+              onRefresh: () => state.load(),
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: 96),
+                children: [
+                  if (current != null) _CurrentAccountCard(account: current),
+                  if (state.accounts.isEmpty)
+                    const _EmptyState()
+                  else ...[
+                    const _SectionHeader(title: '全部账户'),
+                    for (final account in state.accounts)
+                      AccountTile(
+                        account: account,
+                        isCurrent: account.id == state.currentAccountId,
+                        onTap: () => state.switchAccount(account.id),
+                        onEdit: () => _editCookie(context, account),
+                        onDelete: () => _confirmDelete(context, state, account),
+                      ),
+                  ],
+                ],
+              ),
+            ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _openLogin(context),
         icon: const Icon(Icons.person_add_alt_1),
@@ -95,7 +96,7 @@ class AccountListPage extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('删除账户'),
+        title: const Text('删除账户'),
         content: Text('确定删除「${account.displayName}」吗？其登录态也会一并移除。'),
         actions: [
           TextButton(
@@ -252,11 +253,14 @@ class _CurrentAccountCard extends StatelessWidget {
                   ],
                 ),
               ),
-              Icon(
-                account.hasLogin
-                    ? Icons.verified_user
-                    : Icons.help_outline,
-                color: scheme.onPrimary,
+              Tooltip(
+                message: account.sessionStatusLabel,
+                child: Icon(
+                  account.hasLogin ? Icons.verified_user : Icons.help_outline,
+                  color: account.sessionStatus == AccountSessionStatus.expired
+                      ? scheme.errorContainer
+                      : scheme.onPrimary,
+                ),
               ),
             ],
           ),
@@ -300,6 +304,24 @@ class _CurrentAccountCard extends StatelessWidget {
               ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SessionValidationProgress extends StatelessWidget {
+  const _SessionValidationProgress();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text('正在验证账号登录状态…'),
         ],
       ),
     );
@@ -378,8 +400,7 @@ class _EmptyState extends StatelessWidget {
       padding: const EdgeInsets.only(top: 80),
       child: Column(
         children: [
-          Icon(Icons.account_circle_outlined,
-              size: 72, color: scheme.outline),
+          Icon(Icons.account_circle_outlined, size: 72, color: scheme.outline),
           const SizedBox(height: 12),
           Text(
             '还没有账户',

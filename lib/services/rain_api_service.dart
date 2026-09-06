@@ -32,7 +32,36 @@ class LoginResult {
   static LoginResult ok(String cookie,
           {String? userId, String? nickname, String message = '登录成功'}) =>
       LoginResult(
-          success: true, cookie: cookie, message: message, userId: userId, nickname: nickname);
+          success: true,
+          cookie: cookie,
+          message: message,
+          userId: userId,
+          nickname: nickname);
+}
+
+/// Cookie 会话的服务器验证结果。
+///
+/// [unavailable] 与 [expired] 必须分开：断网、超时或服务器故障时
+/// 不能据此删除用户的 Cookie。
+enum SessionValidationStatus { valid, expired, unavailable }
+
+class SessionValidationResult {
+  const SessionValidationResult._(this.status, {this.profile});
+
+  final SessionValidationStatus status;
+  final Map<String, dynamic>? profile;
+
+  static SessionValidationResult valid(Map<String, dynamic> profile) =>
+      SessionValidationResult._(
+        SessionValidationStatus.valid,
+        profile: profile,
+      );
+
+  static const expired =
+      SessionValidationResult._(SessionValidationStatus.expired);
+
+  static const unavailable =
+      SessionValidationResult._(SessionValidationStatus.unavailable);
 }
 
 /// 简单 Cookie 容器：从响应 Set-Cookie 提取并维护会话。
@@ -85,9 +114,7 @@ class CookieJar {
     if (_cookies.isEmpty) {
       return null;
     }
-    return _cookies.entries
-        .map((e) => '${e.key}=${e.value}')
-        .join('; ');
+    return _cookies.entries.map((e) => '${e.key}=${e.value}').join('; ');
   }
 
   bool get isEmpty => _cookies.isEmpty;
@@ -150,9 +177,13 @@ class RainApiService {
     };
   }
 
-  Map<String, String> _authHeaders({String? cookie}) {
+  Map<String, String> _authHeaders({
+    String? cookie,
+    String? uid,
+    bool includeInternalSession = true,
+  }) {
     final headers = _baseHeaders();
-    final effective = cookie ?? _jar.header;
+    final effective = cookie ?? (includeInternalSession ? _jar.header : null);
     if (effective != null && effective.isNotEmpty) {
       headers['Cookie'] = effective;
       // 雨课堂需要额外几个头（取自 Cookie），否则只带 Cookie 可能校验失败。
@@ -165,11 +196,15 @@ class RainApiService {
         headers['sessionid'] = sssid;
       }
     }
-    if (_uid != null && _uid!.isNotEmpty) {
-      headers['x-uid'] = _uid!;
+    // 优先用传入的账号 uid（重启后 *_uid 可能为空），保证多账号请求头 x-uid 正确。
+    final effectiveUid = uid ?? (includeInternalSession ? _uid : null);
+    if (effectiveUid != null && effectiveUid.isNotEmpty) {
+      headers['x-uid'] = effectiveUid;
     }
     // 雨课堂鉴权优先用 Bearer Token（来自登录响应头 set-auth）。
-    if (_bearerToken != null && _bearerToken!.isNotEmpty) {
+    if (includeInternalSession &&
+        _bearerToken != null &&
+        _bearerToken!.isNotEmpty) {
       headers['authorization'] = 'Bearer $_bearerToken';
     }
     return headers;
@@ -382,12 +417,18 @@ class RainApiService {
   /// 获取二维码登录信息（返回 { token, qrImage }）。pre-info 为 GET。
   Future<Map<String, dynamic>?> getQRCodeData() async {
     final uri = Uri.parse(AppConfig.url(AppConfig.qrPreInfoPath));
-    var response = await _client.get(uri, headers: _loginHeaders()).timeout(_timeout);
+    var response =
+        await _client.get(uri, headers: _loginHeaders()).timeout(_timeout);
     _logLogin('GET', AppConfig.qrPreInfoPath, null, response.statusCode,
         utf8.decode(response.bodyBytes, allowMalformed: true));
     if (_isAbnormalResponse(response)) {
-      response = await _client.get(uri, headers: _loginHeaders()).timeout(_timeout);
-      _logLogin('GET(retry)', AppConfig.qrPreInfoPath, null, response.statusCode,
+      response =
+          await _client.get(uri, headers: _loginHeaders()).timeout(_timeout);
+      _logLogin(
+          'GET(retry)',
+          AppConfig.qrPreInfoPath,
+          null,
+          response.statusCode,
           utf8.decode(response.bodyBytes, allowMalformed: true));
     }
     if (_isAbnormalResponse(response)) {
@@ -473,7 +514,8 @@ class RainApiService {
     final b = StringBuffer();
     for (final e in _loginLogs) {
       b
-        ..writeln('[${e.time.toIso8601String()}] [${e.server}] ${e.method} ${e.path}')
+        ..writeln(
+            '[${e.time.toIso8601String()}] [${e.server}] ${e.method} ${e.path}')
         ..writeln('  req: ${e.reqBody ?? ''}')
         ..writeln('  http:${e.status}  resp: ${e.respBody}');
     }
@@ -487,9 +529,8 @@ class RainApiService {
   void _logLogin(String method, String path, Object? reqBody, int status,
       String respBody) {
     final now = DateTime.now();
-    _loginLogs.add(_LoginLogEntry(
-        now, PlatformManager().currentServer.name, method, path, reqBody,
-        status, respBody));
+    _loginLogs.add(_LoginLogEntry(now, PlatformManager().currentServer.name,
+        method, path, reqBody, status, respBody));
     _loginLogs.removeWhere((e) => now.difference(e.time) > _logMaxAge);
   }
 
@@ -519,57 +560,174 @@ class RainApiService {
     return -1;
   }
 
+  /// 登录态 GET 请求；服务器 404/5xx/空体时重试一次，仍异常返回 null。
+  Future<http.Response?> _getWithRetry(Uri uri,
+      {String? cookie, String? uid}) async {
+    final headers = _authHeaders(cookie: cookie, uid: uid);
+    var response = await _client.get(uri, headers: headers).timeout(_timeout);
+    _logLogin('GET', uri.path, null, response.statusCode,
+        utf8.decode(response.bodyBytes, allowMalformed: true));
+    if (_isAbnormalResponse(response)) {
+      response = await _client.get(uri, headers: headers).timeout(_timeout);
+      _logLogin('GET(retry)', uri.path, null, response.statusCode,
+          utf8.decode(response.bodyBytes, allowMalformed: true));
+    }
+    return _isAbnormalResponse(response) ? null : response;
+  }
+
   /// 获取当前用户信息。 [cookie] 若提供则以它作为会话，否则用内部会话。
   ///
   /// 雨课堂返回结构: `{ data: { user_profile: { user_id, name, school,
   /// phone_number, avatar } } }`。
-  Future<Map<String, dynamic>?> fetchUserInfo({String? cookie}) async {
+  Future<Map<String, dynamic>?> fetchUserInfo(
+      {String? cookie, String? uid}) async {
     final uri = Uri.parse(AppConfig.url(AppConfig.userInfoPath));
-    final response = await _client
-        .get(uri, headers: _authHeaders(cookie: cookie))
-        .timeout(_timeout);
-    if (response.statusCode != 200) {
+    final response = await _getWithRetry(uri, cookie: cookie, uid: uid);
+    if (response == null) {
       return null;
     }
     final data = _decodeBody(response);
-    final userProfile = data['data'];
-    final profile = userProfile is Map<String, dynamic>
-        ? (userProfile['user_profile'] is Map<String, dynamic>
-            ? userProfile['user_profile'] as Map<String, dynamic>
-            : userProfile)
-        : data;
-    final uid = profile['user_id']?.toString();
-    if (uid != null && uid.isNotEmpty) {
-      _uid = uid;
+    final profile = _extractUserProfile(data);
+    final userId = profile['user_id']?.toString();
+    if (userId != null && userId.isNotEmpty) {
+      _uid = userId;
     }
     return profile;
   }
 
-  /// 获取课程列表。 [cookie] 为当前账户会话；提供则用它。
-  Future<List<Course>> fetchCourses({String? cookie}) async {
-    final uri = Uri.parse(AppConfig.url(AppConfig.courseListPath));
-    final response = await _client
-        .get(uri, headers: _authHeaders(cookie: cookie))
-        .timeout(_timeout);
-    final data = _decodeBody(response);
-    final list = _extractList(data);
-    return list.map((e) => Course.fromJson(e)).toList();
+  /// 向用户信息接口发起一次轻量请求，验证指定 Cookie 是否仍有效。
+  ///
+  /// 只有服务器明确拒绝鉴权时才返回 [SessionValidationStatus.expired]；
+  /// 网络异常、5xx 和无法识别的响应都返回 [SessionValidationStatus.unavailable]。
+  Future<SessionValidationResult> validateSession({
+    required String cookie,
+    String? uid,
+    RainClassroomServerType? server,
+  }) async {
+    if (cookie.trim().isEmpty) {
+      return SessionValidationResult.expired;
+    }
+
+    final baseUrl = server == null
+        ? AppConfig.baseUrl
+        : PlatformManager.serverBaseUrlMap[server]!;
+    final uri = Uri.parse('$baseUrl${AppConfig.userInfoPath}');
+
+    try {
+      final response = await _client
+          .get(
+            uri,
+            headers: _authHeaders(
+              cookie: cookie,
+              uid: uid,
+              includeInternalSession: false,
+            ),
+          )
+          .timeout(_timeout);
+      _logLogin(
+        'GET(session-check)',
+        uri.path,
+        null,
+        response.statusCode,
+        utf8.decode(response.bodyBytes, allowMalformed: true),
+      );
+
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        return SessionValidationResult.expired;
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return SessionValidationResult.unavailable;
+      }
+
+      final responseText =
+          utf8.decode(response.bodyBytes, allowMalformed: true).trim();
+      final contentType = response.headers['content-type']?.toLowerCase() ?? '';
+      // 会话过期时，某些部署会跟随重定向并最终返回登录页 HTML。
+      if (contentType.contains('text/html') || responseText.startsWith('<')) {
+        return SessionValidationResult.expired;
+      }
+
+      final data = _decodeBody(response);
+      if (_isAuthenticationFailure(data)) {
+        return SessionValidationResult.expired;
+      }
+      if (_isAuthenticatedUserPayload(data)) {
+        return SessionValidationResult.valid(_extractUserProfile(data));
+      }
+      return SessionValidationResult.unavailable;
+    } catch (_) {
+      return SessionValidationResult.unavailable;
+    }
+  }
+
+  /// 拉取完整课程列表（learning_list），用于与 on-lesson 合并（仿 course_helper）。
+  Future<List<Map<String, dynamic>>> _fetchLearningList(
+      {String? cookie, String? uid}) async {
+    final uri = Uri.parse(AppConfig.url(AppConfig.courseLearningListPath));
+    final response = await _getWithRetry(uri, cookie: cookie, uid: uid);
+    if (response == null) {
+      return [];
+    }
+    final list = _extractList(_decodeBody(response));
+    return [
+      for (final e in list)
+        if (e is Map<String, dynamic>) e
+    ];
+  }
+
+  /// 获取课程列表。 [cookie] 为当前账户会话。
+  ///
+  /// 仿 course_helper：`learning_list` 给完整课程信息，`on-lesson` 给「上课中课程」
+  /// 的 courseId + lessonId，二者按 courseId 合并，得到带 lesson_id 的当前课程。
+  Future<List<Course>> fetchCourses({String? cookie, String? uid}) async {
+    final fullCourses = await _fetchLearningList(cookie: cookie, uid: uid);
+    final onLessonUri = Uri.parse(AppConfig.url(AppConfig.courseListPath));
+    final onLessonResp =
+        await _getWithRetry(onLessonUri, cookie: cookie, uid: uid);
+    final onLessonItems = <Map<String, dynamic>>[];
+    if (onLessonResp != null) {
+      final list = _extractList(_decodeBody(onLessonResp));
+      onLessonItems.addAll([
+        for (final e in list)
+          if (e is Map<String, dynamic>) e
+      ]);
+    }
+
+    final coursesMap = {
+      for (final c in fullCourses) '${c['course_id'] ?? c['id'] ?? ''}': c,
+    };
+
+    final result = <Course>[];
+    for (final item in onLessonItems) {
+      final courseId = '${item['courseId'] ?? item['course_id'] ?? ''}';
+      final full = coursesMap[courseId];
+      if (full == null) {
+        continue;
+      }
+      // 把 on-lesson 的 lessonId 合并进完整课程信息，再解析。
+      final merged = Map<String, dynamic>.from(full);
+      final lessonId = item['lessonId'] ?? item['lesson_id'];
+      if (lessonId != null) {
+        merged['lesson_id'] = lessonId;
+      }
+      result.add(Course.fromJson(merged));
+    }
+    return result;
   }
 
   /// 获取某个课程的课件（幻灯片）列表。
-  Future<List<Slide>> fetchSlides(Course course, {String? cookie}) async {
+  Future<List<Slide>> fetchSlides(Course course,
+      {String? cookie, String? uid}) async {
     final presentationId = course.presentationId ?? course.id;
     final uri = Uri.parse(AppConfig.url(AppConfig.courseSlidesPath)).replace(
       queryParameters: {'presentation_id': presentationId},
     );
-    final response = await _client
-        .get(uri, headers: _authHeaders(cookie: cookie))
-        .timeout(_timeout);
-    final data = _decodeBody(response);
-    final list = _extractList(data);
-    return [
-      for (var i = 0; i < list.length; i++) Slide.fromJson(list[i], i)
-    ];
+    final response = await _getWithRetry(uri, cookie: cookie, uid: uid);
+    if (response == null) {
+      return [];
+    }
+    final list = _extractList(_decodeBody(response));
+    return [for (var i = 0; i < list.length; i++) Slide.fromJson(list[i], i)];
   }
 
   // ---- 工具方法 ----
@@ -633,6 +791,50 @@ class RainApiService {
       }
     }
     return null;
+  }
+
+  Map<String, dynamic> _extractUserProfile(Map<String, dynamic> data) {
+    final responseData = data['data'];
+    if (responseData is Map<String, dynamic>) {
+      final userProfile = responseData['user_profile'];
+      if (userProfile is Map<String, dynamic>) {
+        return userProfile;
+      }
+      return responseData;
+    }
+    return data;
+  }
+
+  bool _isAuthenticatedUserPayload(Map<String, dynamic> data) {
+    final responseData = data['data'];
+    if (responseData is Map<String, dynamic> &&
+        responseData.containsKey('user_profile')) {
+      // 未绑定高校的新账号可能返回 user_profile: null，
+      // 但能返回该鉴权结构本身就说明会话仍有效。
+      return true;
+    }
+    final profile = _extractUserProfile(data);
+    return _pickString(profile, ['user_id', 'userId', 'uid']) != null;
+  }
+
+  bool _isAuthenticationFailure(Map<String, dynamic> data) {
+    final code = _code(data);
+    if (code == 401 || code == 403) {
+      return true;
+    }
+    if (code == 0) {
+      return false;
+    }
+    final message = '${data['message'] ?? data['msg'] ?? data['detail'] ?? ''}'
+        .toLowerCase();
+    return message.contains('未登录') ||
+        message.contains('登录过期') ||
+        message.contains('身份认证') ||
+        message.contains('认证失败') ||
+        message.contains('unauthorized') ||
+        message.contains('not logged') ||
+        message.contains('login required') ||
+        message.contains('invalid session');
   }
 }
 

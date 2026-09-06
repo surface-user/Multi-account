@@ -53,6 +53,9 @@ class AppConfig {
   /// 获取课程（上课中）接口。
   static const String courseListPath = '/api/v3/classroom/on-lesson';
 
+  /// 获取全部课程接口（与 [courseListPath] 合并得到完整当前课程，仿 course_helper）。
+  static const String courseLearningListPath = '/v/course_meta/learning_list/';
+
   /// 获取课件（幻灯片）接口，需要 presentation_id 参数。
   static const String courseSlidesPath = '/api/v3/lesson/presentation/fetch';
 

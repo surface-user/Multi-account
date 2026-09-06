@@ -142,8 +142,7 @@ class _QRCheckinPageState extends State<QRCheckinPage>
   /// 从相册选图识别（相机失败/兜底，仿 course_helper 的 scanImage）。
   Future<void> _scanImage(String path) async {
     try {
-      final BarcodeCapture? capture =
-          await _controller?.analyzeImage(path);
+      final BarcodeCapture? capture = await _controller?.analyzeImage(path);
       _stop();
       if (mounted && capture != null && capture.barcodes.isNotEmpty) {
         final code = capture.barcodes.first.rawValue;
@@ -169,6 +168,9 @@ class _QRCheckinPageState extends State<QRCheckinPage>
   }
 
   /// 处理已扫到的二维码内容（相机或相册通用）。
+  ///
+  /// 确认是雨课堂动态签到 URL 后立即上报，不再要求用户二次确认。
+  /// 非雨课堂内容仍然只展示识别结果，避免误提交。
   void _applyScanned(String raw) {
     if (!mounted) {
       return;
@@ -188,6 +190,10 @@ class _QRCheckinPageState extends State<QRCheckinPage>
         _resultOk = false;
       }
     });
+
+    if (info.isUsable) {
+      unawaited(_submit());
+    }
   }
 
   void _onDetect(BarcodeCapture capture) {
@@ -231,6 +237,9 @@ class _QRCheckinPageState extends State<QRCheckinPage>
   }
 
   Future<void> _submit() async {
+    if (_submitting) {
+      return;
+    }
     final info = _info;
     if (info == null) {
       return;
@@ -260,7 +269,8 @@ class _QRCheckinPageState extends State<QRCheckinPage>
     }
 
     final cookie = await state.cookieOf(account.id);
-    final result = await state.checkin.checkin(info, cookie ?? '');
+    final result =
+        await state.checkin.checkin(info, cookie ?? '', uid: account.id);
 
     if (!mounted) {
       return;
@@ -397,7 +407,9 @@ class _QRCheckinPageState extends State<QRCheckinPage>
               children: _buildInfoChips(scheme),
             ),
             const SizedBox(height: 12),
-            if (_resultMessage != null)
+            if (_submitting)
+              const _SubmittingBanner()
+            else if (_resultMessage != null)
               _ResultBanner(ok: _resultOk ?? false, message: _resultMessage!),
             const SizedBox(height: 12),
             Row(
@@ -411,16 +423,18 @@ class _QRCheckinPageState extends State<QRCheckinPage>
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton(
-                    onPressed: (_submitting || !(_info?.isUsable ?? false))
+                    onPressed: (_submitting ||
+                            (_resultOk ?? false) ||
+                            !(_info?.isUsable ?? false))
                         ? null
                         : _submit,
                     child: _submitting
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('确认签到'),
+                        ? const Text('自动签到中…')
+                        : Text(!(_info?.isUsable ?? false)
+                            ? '无法签到'
+                            : (_resultOk ?? false)
+                                ? '签到成功'
+                                : '重试签到'),
                   ),
                 ),
               ],
@@ -453,15 +467,15 @@ class _QRCheckinPageState extends State<QRCheckinPage>
       final raw = info.raw.trim();
       final shown = raw.length > 46 ? '${raw.substring(0, 46)}…' : raw;
       chips.add(Chip(
-        avatar: Icon(Icons.link, color: Colors.blue, size: 16),
+        avatar: const Icon(Icons.link, color: Colors.blue, size: 16),
         label: Text('已识别：$shown'),
         visualDensity: VisualDensity.compact,
       ));
     }
     if (chips.isEmpty) {
-      chips.add(Chip(
+      chips.add(const Chip(
         avatar: Icon(Icons.warning_amber, color: Colors.orange, size: 16),
-        label: const Text('未解析出有效字段'),
+        label: Text('未解析出有效字段'),
       ));
     }
     return chips;
@@ -482,8 +496,7 @@ class QrScanBoxPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final borderRadius =
-        BorderRadius.all(Radius.circular(12)).toRRect(
+    final borderRadius = const BorderRadius.all(Radius.circular(12)).toRRect(
       Rect.fromLTWH(0, 0, size.width, size.height),
     );
     canvas.drawRRect(
@@ -523,7 +536,7 @@ class QrScanBoxPainter extends CustomPainter {
     canvas.drawPath(path, borderPaint);
 
     canvas.clipRRect(
-      BorderRadius.all(Radius.circular(12)).toRRect(Offset.zero & size),
+      const BorderRadius.all(Radius.circular(12)).toRRect(Offset.zero & size),
     );
 
     // 扫描线。
@@ -541,6 +554,34 @@ class QrScanBoxPainter extends CustomPainter {
   @override
   bool shouldRebuildSemantics(QrScanBoxPainter oldDelegate) =>
       animationValue != oldDelegate.animationValue;
+}
+
+class _SubmittingBanner extends StatelessWidget {
+  const _SubmittingBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.primary;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2, color: color),
+          ),
+          const SizedBox(width: 10),
+          const Expanded(child: Text('已识别雨课堂二维码，正在自动签到…')),
+        ],
+      ),
+    );
+  }
 }
 
 class _ResultBanner extends StatelessWidget {
@@ -574,5 +615,3 @@ class _ResultBanner extends StatelessWidget {
     );
   }
 }
-
-

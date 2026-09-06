@@ -25,6 +25,18 @@ class AccountTile extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final avatarBg =
         isCurrent ? scheme.primary : scheme.surfaceContainerHighest;
+    final sessionColor = switch (account.sessionStatus) {
+      AccountSessionStatus.valid => Colors.green,
+      AccountSessionStatus.expired => scheme.error,
+      AccountSessionStatus.unavailable => Colors.orange,
+      AccountSessionStatus.unknown => scheme.outline,
+    };
+    final sessionIcon = switch (account.sessionStatus) {
+      AccountSessionStatus.valid => Icons.cloud_done_outlined,
+      AccountSessionStatus.expired => Icons.cloud_off_outlined,
+      AccountSessionStatus.unavailable => Icons.cloud_sync_outlined,
+      AccountSessionStatus.unknown => Icons.cloud_queue_outlined,
+    };
 
     return Card(
       child: InkWell(
@@ -37,7 +49,8 @@ class AccountTile extends StatelessWidget {
               CircleAvatar(
                 radius: 22,
                 backgroundColor: avatarBg,
-                foregroundColor: isCurrent ? scheme.onPrimary : scheme.onSurface,
+                foregroundColor:
+                    isCurrent ? scheme.onPrimary : scheme.onSurface,
                 child: Text(
                   StringUtils.initialOf(account.displayName),
                   style: const TextStyle(fontWeight: FontWeight.bold),
@@ -115,26 +128,21 @@ class AccountTile extends StatelessWidget {
                     Row(
                       children: [
                         Icon(
-                          account.hasLogin
-                              ? Icons.cloud_done_outlined
-                              : Icons.cloud_off_outlined,
+                          sessionIcon,
                           size: 14,
-                          color: account.hasLogin
-                              ? Colors.green
-                              : scheme.outline,
+                          color: sessionColor,
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          account.hasLogin ? '已登录' : '未登录',
+                          account.sessionStatusLabel,
                           style: TextStyle(
                             fontSize: 12,
-                            color: account.hasLogin
-                                ? Colors.green
-                                : scheme.outline,
+                            color: sessionColor,
                           ),
                         ),
                         const SizedBox(width: 10),
-                        Icon(Icons.dns_outlined, size: 13, color: scheme.outline),
+                        Icon(Icons.dns_outlined,
+                            size: 13, color: scheme.outline),
                         const SizedBox(width: 4),
                         Text(
                           account.serverName,

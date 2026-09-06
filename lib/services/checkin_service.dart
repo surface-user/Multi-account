@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../config/app_config.dart';
 import '../models/checkin_info.dart';
@@ -34,9 +36,28 @@ class CheckinService {
   final Duration _timeout =
       const Duration(seconds: AppConfig.networkTimeoutSeconds);
 
+  /// 持久化的设备 UUID（用作请求头 `uuid`，与登录一致）。
+  String _deviceUuid = '';
+
+  /// 读取本地持久化的设备 UUID（没有则生成并保存）。
+  Future<String> _loadDeviceUuid() async {
+    if (_deviceUuid.isNotEmpty) {
+      return _deviceUuid;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    var uuid = prefs.getString('rain_device_uuid');
+    if (uuid == null || uuid.isEmpty) {
+      uuid = const Uuid().v4();
+      await prefs.setString('rain_device_uuid', uuid);
+    }
+    _deviceUuid = uuid;
+    return uuid;
+  }
+
   /// 执行扫码签到。 [cookie] 为当前账户的会话 Cookie。
-  /// [info.raw] 即二维码扫描得到的 URL，作为第一步 scan 的 `url`。
-  Future<CheckinResult> checkin(CheckinInfo info, String cookie) async {
+  /// [uid] 为当前账户的用户 ID（用于 `x-uid` 头）。 [info.raw] 即二维码扫描得到的 URL。
+  Future<CheckinResult> checkin(
+      CheckinInfo info, String cookie, {String? uid}) async {
     if (cookie.isEmpty) {
       return CheckinResult.fail('当前账户未登录（缺少会话 Cookie）');
     }
@@ -47,16 +68,17 @@ class CheckinService {
     if (!info.isUsable) {
       return CheckinResult.fail('这不是雨课堂签到二维码');
     }
+    await _loadDeviceUuid();
 
     try {
       // 第一步：扫描，拿 lessonId。
-      final lessonId = await _scan(qrUrl, cookie);
+      final lessonId = await _scan(qrUrl, cookie, uid: uid);
       if (lessonId == null || lessonId.isEmpty) {
         return CheckinResult.fail('未能从二维码解析出签到任务（二维码可能无效或已过期）');
       }
 
       // 第二步：上报签到。
-      return await _checkin(lessonId, cookie);
+      return await _checkin(lessonId, cookie, uid: uid);
     } catch (e) {
       return CheckinResult.fail('签到异常: $e');
     }
@@ -73,11 +95,11 @@ class CheckinService {
     return CheckinResult.ok();
   }
 
-  Future<String?> _scan(String qrUrl, String cookie) async {
+  Future<String?> _scan(String qrUrl, String cookie, {String? uid}) async {
     final uri = Uri.parse(AppConfig.url(AppConfig.scanPath));
     final body = {'url': qrUrl};
     final response = await _client
-        .post(uri, headers: _headers(cookie), body: jsonEncode(body))
+        .post(uri, headers: _headers(cookie, uid: uid), body: jsonEncode(body))
         .timeout(_timeout);
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -94,11 +116,12 @@ class CheckinService {
     return null;
   }
 
-  Future<CheckinResult> _checkin(String lessonId, String cookie) async {
+  Future<CheckinResult> _checkin(String lessonId, String cookie,
+      {String? uid}) async {
     final uri = Uri.parse(AppConfig.url(AppConfig.checkinPath));
     final body = {'source': 21, 'lessonId': lessonId, 'joinIfNotIn': true};
     final response = await _client
-        .post(uri, headers: _headers(cookie), body: jsonEncode(body))
+        .post(uri, headers: _headers(cookie, uid: uid), body: jsonEncode(body))
         .timeout(_timeout);
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -112,21 +135,36 @@ class CheckinService {
     return CheckinResult.fail(msg);
   }
 
-  /// 构造雨课堂 API 所需请求头：Cookie + x-csrftoken + sessionid。
-  Map<String, String> _headers(String cookie) {
+  /// 构造雨课堂 API 所需请求头：雨课堂身份头 + Cookie + x-csrftoken + sessionid + x-uid。
+  /// 对齐 course_helper 的 HeadersManager.rainClassroomHeaders（仅带 Cookie 会被 scan 拒绝）。
+  Map<String, String> _headers(String cookie, {String? uid}) {
     final headers = {
-      'User-Agent': AppConfig.userAgent,
-      'Accept': 'application/json, text/plain, */*',
+      'user-agent': 'Android',
+      'brand': 'google Pixel 9 Pro',
+      'uuid': _deviceUuid,
+      'buildnumber': '1610',
+      'xtua': 'client=app&tag=1.3.3&platform=Android',
+      'systemversion': '16',
+      'incremental': '14624737',
+      'accept': 'application/json',
+      'isphysicaldevice': 'true',
+      'xtbz': 'ykt',
+      'x-client': 'app',
       'Content-Type': 'application/json; charset=utf-8',
-      'Cookie': cookie,
     };
-    final csrf = _cookieValue(cookie, 'csrftoken');
-    final sssid = _cookieValue(cookie, 'sessionid');
-    if (csrf != null && csrf.isNotEmpty) {
-      headers['x-csrftoken'] = csrf;
+    if (cookie.isNotEmpty) {
+      headers['Cookie'] = cookie;
+      final csrf = _cookieValue(cookie, 'csrftoken');
+      final sssid = _cookieValue(cookie, 'sessionid');
+      if (csrf != null && csrf.isNotEmpty) {
+        headers['x-csrftoken'] = csrf;
+      }
+      if (sssid != null && sssid.isNotEmpty) {
+        headers['sessionid'] = sssid;
+      }
     }
-    if (sssid != null && sssid.isNotEmpty) {
-      headers['sessionid'] = sssid;
+    if (uid != null && uid.isNotEmpty) {
+      headers['x-uid'] = uid;
     }
     return headers;
   }

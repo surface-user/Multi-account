@@ -25,11 +25,12 @@ class AppState extends ChangeNotifier {
   final RainApiService api;
   final CheckinService checkin;
 
-  static final _uuid = Uuid();
+  static const _uuid = Uuid();
 
   List<Account> _accounts = [];
   String? _currentAccountId;
   bool _loaded = false;
+  bool _loading = false;
 
   List<Account> get accounts => List.unmodifiable(_accounts);
   String? get currentAccountId => _currentAccountId;
@@ -56,25 +57,81 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
-  /// 启动时从本地加载账户，并**回填**各自的会话 Cookie（Cookie 单独加密存储，
-  /// 不在账户 JSON 里，因此加载后需要从 [CookieStore] 读回，保证登录态指示正确）。
+  /// 启动时从本地加载账户、回填 Cookie，并向各账号所属服务器验证会话。
+  ///
+  /// 多账号验证并行执行；只有服务器明确返回鉴权失效时才删除 Cookie。
+  /// 断网、超时或服务器异常时保留原会话，并显示为「暂时无法验证」。
   Future<void> load() async {
-    final stored = await _accountStore.loadAll();
-    final hydrated = <Account>[];
-    for (final account in stored) {
-      final cookie = await _cookieStore.read(account.id);
-      hydrated.add(cookie != null ? account.copyWith(cookie: cookie) : account);
+    if (_loading) {
+      return;
     }
-    _accounts = hydrated;
-    if (_accounts.isNotEmpty && _currentAccountId == null) {
-      _currentAccountId = _accounts.first.id;
-      // 让全局服务器跟随当前账户，保证后续请求的 Cookie 域匹配。
-      await PlatformManager().setServer(_accounts.first.server);
-    }
-    // 初始化持久化设备 UUID（请求头 uuid 不再为空）。
-    await api.ensureDeviceUuid();
-    _loaded = true;
+    _loading = true;
+    _loaded = false;
     notifyListeners();
+
+    try {
+      final stored = await _accountStore.loadAll();
+      final hydrated = <Account>[];
+      for (final account in stored) {
+        final cookie = await _cookieStore.read(account.id);
+        hydrated
+            .add(cookie != null ? account.copyWith(cookie: cookie) : account);
+      }
+
+      // 请求头里的设备 UUID 必须在验证请求前准备好。
+      await api.ensureDeviceUuid();
+      _accounts = await Future.wait(hydrated.map(_validateStoredAccount));
+      await _accountStore.saveAll(_accounts);
+
+      if (_accounts.isNotEmpty && _currentAccountId == null) {
+        _currentAccountId = _accounts.first.id;
+      }
+      final current = currentAccount;
+      if (current != null) {
+        // 验证请求不改全局服务器；结束后再让它跟随当前账号。
+        await PlatformManager().setServer(current.server);
+      }
+    } finally {
+      _loading = false;
+      _loaded = true;
+      notifyListeners();
+    }
+  }
+
+  Future<Account> _validateStoredAccount(Account account) async {
+    final cookie = account.cookie;
+    if (cookie == null || cookie.trim().isEmpty) {
+      return account.copyWith(sessionStatus: AccountSessionStatus.expired);
+    }
+
+    final result = await api.validateSession(
+      cookie: cookie,
+      uid: account.userId,
+      server: account.server,
+    );
+    switch (result.status) {
+      case SessionValidationStatus.valid:
+        final profile = result.profile ?? const <String, dynamic>{};
+        final nickname = profile['name']?.toString();
+        final userId = profile['user_id']?.toString();
+        final school = profile['school']?.toString();
+        return account.copyWith(
+          nickname: nickname != null && nickname.isNotEmpty ? nickname : null,
+          userId: userId != null && userId.isNotEmpty ? userId : null,
+          school: school != null && school.isNotEmpty ? school : null,
+          sessionStatus: AccountSessionStatus.valid,
+        );
+      case SessionValidationStatus.expired:
+        await _cookieStore.delete(account.id);
+        return account.copyWith(
+          clearCookie: true,
+          sessionStatus: AccountSessionStatus.expired,
+        );
+      case SessionValidationStatus.unavailable:
+        return account.copyWith(
+          sessionStatus: AccountSessionStatus.unavailable,
+        );
+    }
   }
 
   /// 读取某账户的会话 Cookie。
@@ -93,7 +150,8 @@ class AppState extends ChangeNotifier {
   /// 用手动粘贴的 Cookie 添加账户。
   Future<({bool ok, String message})> addWithCookie(
       String username, String cookie,
-      {RainClassroomServerType server = RainClassroomServerType.yuketang}) async {
+      {RainClassroomServerType server =
+          RainClassroomServerType.yuketang}) async {
     if (!CookieStore.isValidCookie(cookie)) {
       return (ok: false, message: 'Cookie 无效，请重新粘贴');
     }
@@ -126,6 +184,7 @@ class AppState extends ChangeNotifier {
       server: server,
       school: school,
       lastLoginAt: DateTime.now(),
+      sessionStatus: AccountSessionStatus.valid,
       createdAt: DateTime.now(),
     );
     _accounts.add(account);
@@ -154,7 +213,8 @@ class AppState extends ChangeNotifier {
     }
     api.setCookie(cookie);
 
-    final fallback = (username != null && username.isNotEmpty) ? username : '扫码用户';
+    final fallback =
+        (username != null && username.isNotEmpty) ? username : '扫码用户';
     String nickname = fallback;
     String? userId;
     String school = '';
@@ -173,7 +233,8 @@ class AppState extends ChangeNotifier {
     }
 
     // 二维码登录没有账号输入，不去重，每次都新增一个账户。
-    final dedupKey = (username != null && username.isNotEmpty) ? username : null;
+    final dedupKey =
+        (username != null && username.isNotEmpty) ? username : null;
 
     Account target;
     if (editAccountId != null) {
@@ -189,11 +250,12 @@ class AppState extends ChangeNotifier {
         isRegistered: isRegistered,
         school: school,
         lastLoginAt: DateTime.now(),
+        sessionStatus: AccountSessionStatus.valid,
       );
       await _cookieStore.save(target.id, cookie);
     } else if (dedupKey != null) {
-      final idx =
-          _accounts.indexWhere((a) => a.username == dedupKey && a.server == server);
+      final idx = _accounts
+          .indexWhere((a) => a.username == dedupKey && a.server == server);
       if (idx >= 0) {
         target = _accounts[idx].copyWith(
           nickname: nickname,
@@ -202,6 +264,7 @@ class AppState extends ChangeNotifier {
           server: server,
           isRegistered: isRegistered,
           lastLoginAt: DateTime.now(),
+          sessionStatus: AccountSessionStatus.valid,
         );
         await _cookieStore.save(target.id, cookie);
       } else {
@@ -215,6 +278,7 @@ class AppState extends ChangeNotifier {
           isRegistered: isRegistered,
           school: school,
           lastLoginAt: DateTime.now(),
+          sessionStatus: AccountSessionStatus.valid,
           createdAt: DateTime.now(),
         );
         _accounts.add(target);
@@ -231,6 +295,7 @@ class AppState extends ChangeNotifier {
         isRegistered: isRegistered,
         school: school,
         lastLoginAt: DateTime.now(),
+        sessionStatus: AccountSessionStatus.valid,
         createdAt: DateTime.now(),
       );
       _accounts.add(target);
@@ -252,6 +317,7 @@ class AppState extends ChangeNotifier {
     _accounts[idx] = _accounts[idx].copyWith(
       cookie: cookie,
       lastLoginAt: DateTime.now(),
+      sessionStatus: AccountSessionStatus.valid,
     );
     await _cookieStore.save(id, cookie);
     await _accountStore.saveAll(_accounts);
@@ -290,6 +356,7 @@ class AppState extends ChangeNotifier {
         cookie: result.cookie,
         userId: result.userId ?? _accounts[idx].userId,
         lastLoginAt: DateTime.now(),
+        sessionStatus: AccountSessionStatus.valid,
       );
       await _cookieStore.save(_accounts[idx].id, result.cookie!);
       _currentAccountId = _accounts[idx].id;
@@ -305,6 +372,7 @@ class AppState extends ChangeNotifier {
       userId: result.userId,
       cookie: result.cookie,
       lastLoginAt: DateTime.now(),
+      sessionStatus: AccountSessionStatus.valid,
       createdAt: DateTime.now(),
     );
     _accounts.add(account);
